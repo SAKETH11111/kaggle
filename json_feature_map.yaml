@@ -1,0 +1,25 @@
+features:
+  - path: ticket.restrictions.*
+    name: ticket_restrictions
+    dtype: str
+    join_key: ranker_id
+  - path: policy.violations.*
+    name: policy_violations
+    dtype: str
+    join_key: ranker_id
+  - path: seatMap.availability.total
+    name: seatmap_availability_total
+    dtype: int
+    join_key: ranker_id
+  - path: segments.*.onTimePerf
+    name: segments_on_time_perf
+    dtype: float
+    join_key: ranker_id
+  - path: baggage.fees.totalAmount
+    name: baggage_fees_total_amount
+    dtype: float
+    join_key: ranker_id
+  - path: cancellation.penalties.maxPenaltyPct
+    name: cancellation_penalties_max_penalty_pct
+    dtype: float
+    join_key: ranker_id
