@@ -33,6 +33,7 @@ def main():
         'n_jobs': -1,
         'colsample_bytree': 0.8,
         'subsample': 0.8,
+        'device': 'gpu',
     }
 
     # --- 2. Data Preparation ---
