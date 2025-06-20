@@ -1,0 +1,20 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+# Data and processed files
+/data/
+/processed/
+
+# Log files
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE files
+.idea/
+.vscode/ 
+*.parquet
+
+# Dataset folder - ignore completely
+/dataset_full/
+/teamspace/studios/this_studio/kaggle/dataset_full/

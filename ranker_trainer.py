@@ -29,6 +29,9 @@ class RankerTrainer:
         Trains the LGBMRanker model.
         """
         logger.info("Training LGBMRanker model...")
+        # Convert object/datetime/bool columns to dtypes LightGBM accepts
+        X_train = self._preprocess_features(X_train)
+        X_val = self._preprocess_features(X_val)
         self.model.fit(
             X_train, y_train, group=group_train,
             eval_set=[(X_val, y_val)], eval_group=[group_val],
@@ -41,7 +44,27 @@ class RankerTrainer:
         """
         Generates predictions using the trained model.
         """
-        return self.model.predict(X)
+        X_proc = self._preprocess_features(X)
+        return self.model.predict(X_proc)
+
+    @staticmethod
+    def _preprocess_features(df: pd.DataFrame) -> pd.DataFrame:
+        """Ensure dataframe has dtypes compatible with LightGBM.
+
+        * object  -> category
+        * datetime64[ns/us] -> int64
+        * bool    -> int8
+        """
+        df = df.copy()
+        for col in df.columns:
+            series = df[col]
+            if pd.api.types.is_object_dtype(series):
+                df[col] = series.astype("category")
+            elif pd.api.types.is_bool_dtype(series):
+                df[col] = series.astype("int8")
+            elif pd.api.types.is_datetime64_any_dtype(series):
+                df[col] = series.view("int64")
+        return df
 
     def save_model(self, filename: str):
         """
