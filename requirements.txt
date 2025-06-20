@@ -4,3 +4,4 @@ orjson
 ijson
 multiprocess
 tqdm
+dpath
