@@ -7,6 +7,7 @@ import polars as pl
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Union
+from sklearn.model_selection import StratifiedGroupKFold
 import json
 import pickle
 from pathlib import Path
@@ -68,44 +69,47 @@ class ValidationUtils:
         return validations
     
     @staticmethod
-    def calculate_hitrate_at_k(predictions: pl.DataFrame, k: int = 3, min_group_size: int = 10) -> float:
-        """Calculate HitRate@k metric"""
+    def calculate_hitrate_at_k(predictions: pl.DataFrame, k: int = 3, min_group_size: int = 11) -> float:
+        """
+        Calculate HitRate@k metric based on predicted scores.
+
+        Args:
+            predictions (pl.DataFrame): DataFrame with ranker_id, predicted_score, and selected columns.
+            k (int): The 'k' in HitRate@k.
+            min_group_size (int): The minimum number of items in a group to be included in the evaluation.
+                                 Per competition rules, we exclude groups with 10 or fewer items,
+                                 so the default is 11 (groups > 10).
+
+        Returns:
+            float: The HitRate@k score.
+        """
         try:
-            # Filter groups with more than min_group_size options
-            large_groups = (
-                predictions
-                .group_by("ranker_id")
-                .agg(pl.count().alias("group_size"))
-                .filter(pl.col("group_size") > min_group_size)
-                .select("ranker_id")
+            # Add group size and rank based on predicted score
+            ranked_preds = predictions.with_columns([
+                pl.col("ranker_id").count().over("ranker_id").alias("group_size"),
+                pl.col("predicted_score").rank(method="ordinal", descending=True).over("ranker_id").alias("predicted_rank")
+            ])
+
+            # Filter for groups large enough to be evaluated
+            valid_groups = ranked_preds.filter(pl.col("group_size") >= min_group_size)
+
+            if valid_groups.height == 0:
+                logger.warning("No groups met the minimum size requirement for HitRate calculation.")
+                return 0.0
+
+            # Find the rank of the truly selected item in each valid group
+            hits = valid_groups.filter(
+                (pl.col("selected") == 1) & (pl.col("predicted_rank") <= k)
             )
-            
-            # Get predictions for large groups only
-            filtered_predictions = predictions.join(large_groups, on="ranker_id")
-            
-            # Find the rank of the selected item (selected=1 in training, lowest rank in predictions)
-            if "selected" in predictions.columns and predictions.select(pl.col("selected").dtype).dtypes[0] in [pl.Boolean, pl.Int32, pl.Int64]:
-                # Training data format
-                selected_ranks = (
-                    filtered_predictions
-                    .filter(pl.col("selected") == 1)
-                    .group_by("ranker_id")
-                    .agg(pl.col("selected").sum().alias("rank"))  # This should be modified based on actual rank column
-                )
-            else:
-                # Submission format - find minimum rank per group (assuming 1 is best)
-                selected_ranks = (
-                    filtered_predictions
-                    .group_by("ranker_id")
-                    .agg(pl.col("selected").min().alias("best_rank"))
-                )
-            
-            # Count hits at k
-            hits = selected_ranks.filter(pl.col("best_rank") <= k).shape[0]
-            total = selected_ranks.shape[0]
-            
-            return hits / total if total > 0 else 0.0
-            
+
+            # Total number of unique groups that were evaluated
+            total_evaluated_groups = valid_groups.select("ranker_id").n_unique()
+
+            if total_evaluated_groups == 0:
+                return 0.0
+
+            return hits.height / total_evaluated_groups
+
         except Exception as e:
             logger.error(f"Error calculating HitRate@{k}: {e}")
             return 0.0
@@ -305,6 +309,34 @@ class CrossValidationUtils:
             val_df = df.join(val_groups, on=group_col, how="inner")
             
             splits.append((train_df, val_df))
+        
+        return splits
+
+    @staticmethod
+    def stratified_group_kfold_split(df: pl.DataFrame, group_col: str, stratify_col: str, n_splits: int = 5, seed: int = 42) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Create stratified group K-fold splits.
+
+        This method ensures that all records from a given group fall into the same split
+        while maintaining a balanced representation of the target variable in each fold.
+
+        Args:
+            df: The input DataFrame.
+            group_col: The column to group by (e.g., 'profileId').
+            stratify_col: The column to stratify by (e.g., 'selected').
+            n_splits: The number of folds.
+            seed: The random seed for reproducibility.
+
+        Returns:
+            A list of tuples, where each tuple contains the training and validation indices.
+        """
+        cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        
+        X = df.select('Id')
+        y = df.select(stratify_col)
+        groups = df.select(group_col)
+
+        splits = list(cv.split(X, y, groups))
         
         return splits
     

@@ -15,6 +15,7 @@ import multiprocessing as mp
 from functools import partial
 import logging
 from dataclasses import dataclass
+from feature_engineering import FeatureEngineer
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -385,6 +386,55 @@ class DataPipeline:
             results["json_sample"] = json_features.head(5).to_dict(as_series=False)
         
         return results
+
+    def prepare_training_data(self, profile_ids: Optional[List[int]] = None) -> pl.LazyFrame:
+        """
+        Prepares a complete, feature-engineered dataset for training.
+
+        This method integrates structured data with JSON-derived features,
+        applies all feature engineering transformations, and optionally filters
+        the data for a specific set of profile IDs for cross-validation.
+
+        Args:
+            profile_ids: An optional list of profile IDs to filter the dataset.
+                         If provided, only these profiles will be included.
+
+        Returns:
+            A polars.LazyFrame ready for model training, including the label,
+            ranker_id for grouping, and profileId for cross-validation.
+        """
+        logger.info("Preparing training data...")
+
+        # Load the full structured training data
+        structured_lf = self.loader.load_structured_data("train")
+
+        # Load the aggregated JSON features
+        json_features_path = self.config.processed_dir / "json_features_aggregated.parquet"
+        if not json_features_path.exists():
+            raise FileNotFoundError(f"JSON features not found at {json_features_path}. Please run JSON extraction first.")
+        
+        json_features_lf = pl.scan_parquet(json_features_path)
+
+        # Join structured data with JSON features
+        combined_lf = structured_lf.join(json_features_lf, on="ranker_id", how="left")
+
+        # Instantiate the feature engineer and apply all transformations
+        feature_engineer = FeatureEngineer()
+        engineered_lf = feature_engineer.engineer_all_features(combined_lf)
+
+        # Filter by profile_ids if provided (for cross-validation)
+        if profile_ids:
+            logger.info(f"Filtering training data for {len(profile_ids)} profile IDs.")
+            engineered_lf = engineered_lf.filter(pl.col("profileId").is_in(profile_ids))
+
+        # Ensure key columns are present
+        final_columns = ["selected", "ranker_id", "profileId"] + [
+            col for col in engineered_lf.columns if col not in ["selected", "ranker_id", "profileId"]
+        ]
+        
+        logger.info("Training data preparation complete.")
+        return engineered_lf.select(final_columns)
+
 
 if __name__ == "__main__":
     # Initialize pipeline
