@@ -3,6 +3,7 @@ import numpy as np
 import logging
 from pathlib import Path
 import argparse
+import json
 
 from data_pipeline import DataPipeline, DataConfig
 from ranker_trainer import RankerTrainer
@@ -31,20 +32,26 @@ def main():
     config = DataConfig()
     N_SPLITS = 5
     RANDOM_SEED = 42
-    MODEL_PARAMS = {
-        'objective': 'lambdarank',
-        'metric': 'ndcg',
-        'n_estimators': 1000,
-        'learning_rate': 0.1,
-        'num_leaves': 63,
-        'max_depth': 7,
-        'min_child_samples': 20,
-        'random_state': RANDOM_SEED,
-        'device': 'cpu',
-        'n_jobs': 32,
-        'colsample_bytree': 0.8,
-        'subsample': 0.8,
-    }
+    
+    # Load the best hyperparameters from the Optuna study
+    best_params_path = Path("processed/optuna_best_params.json")
+    if not best_params_path.exists():
+        raise FileNotFoundError(f"Best parameters file not found at {best_params_path}. Please run run_tuning.py first.")
+    
+    with open(best_params_path, 'r') as f:
+        MODEL_PARAMS = json.load(f)
+    
+    # Ensure essential parameters are set for GPU training
+    MODEL_PARAMS['objective'] = 'lambdarank'
+    MODEL_PARAMS['metric'] = 'ndcg'
+    MODEL_PARAMS['random_state'] = RANDOM_SEED
+    MODEL_PARAMS['n_estimators'] = 1000  # Keep n_estimators high, rely on early stopping
+    MODEL_PARAMS['device'] = 'cuda'
+    MODEL_PARAMS['n_jobs'] = -1
+
+    logger.info("Loaded best hyperparameters from Optuna study:")
+    for key, value in MODEL_PARAMS.items():
+        logger.info(f"  {key}: {value}")
 
     # --- 2. Data Preparation ---
     logger.info("Preparing training data...")
@@ -79,6 +86,7 @@ def main():
 
     oof_preds = []
     fold_scores = []
+    oof_models = []
 
     # --- 4. Training Loop ---
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
@@ -137,11 +145,37 @@ def main():
         trainer.save_model(f"lgbm_ranker_fold_{current_fold_num}.txt")
         
         oof_preds.append(val_results_df)
+        oof_models.append(trainer)
 
     # --- 5. Final Evaluation ---
     logger.info("--- Cross-Validation Complete ---")
     avg_hit_rate = np.mean(fold_scores)
     logger.info(f"Average HitRate@3 across {N_SPLITS} folds: {avg_hit_rate:.4f}")
+
+    # --- 5. Final Model Training on Full Data ---
+    logger.info("--- Training Final Model on Full Dataset ---")
+    
+    # Prepare full dataset
+    full_train_df = full_df.sort('ranker_id')
+    X_full = full_train_df[feature_cols].to_pandas()
+    y_full = full_train_df['selected'].to_pandas()
+    group_full = full_train_df.group_by('ranker_id', maintain_order=True).len()['len'].to_numpy()
+
+    # Determine the optimal number of boosting rounds from the CV
+    # We'll use the average best iteration from the folds, rounded up
+    if oof_models and all(hasattr(m, 'model') and hasattr(m.model, 'best_iteration_') and m.model.best_iteration_ is not None for m in oof_models):
+        avg_best_iteration = int(np.mean([m.model.best_iteration_ for m in oof_models]))
+        MODEL_PARAMS['n_estimators'] = avg_best_iteration
+        logger.info(f"Setting n_estimators for final model to average best iteration: {avg_best_iteration}")
+    else:
+        logger.warning("Could not determine average best iteration from CV. Using default n_estimators.")
+
+    final_trainer = RankerTrainer(model_params=MODEL_PARAMS)
+    # We train without a validation set here, using the optimized number of estimators
+    final_trainer.model.fit(X_full, y_full, group=group_full)
+    
+    logger.info("Final model training complete.")
+    final_trainer.save_model("lgbm_ranker_full_optuna.txt")
 
     # Save out-of-fold predictions
     oof_df = pl.concat(oof_preds)

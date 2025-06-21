@@ -54,7 +54,7 @@ This phase focuses on building and evaluating a baseline `LGBMRanker` model.
 
 - **Task 5: End-to-End Pipeline Integration.**
   - **Goal:** Create a `run_training.py` script that connects all components: data preparation, cross-validation, training, evaluation, and logging. This script will execute the full baseline model training and evaluation workflow.
-  - **Status:** pending
+  - **Status:** ✅ Completed
 
 ## Phase 3: Advanced Feature Engineering & Tuning (Day 4)
 
@@ -62,7 +62,7 @@ This phase focuses on advanced feature engineering and optimizing the `LGBMRanke
 
 - **Task 1: Feature Engineering Sprint.**
   - **Goal:** Brainstorm and implement new features based on domain knowledge and data analysis to improve model performance.
-  - **Status:** Pending
+  - **Status:** ✅ Completed
 
 - **Task 2: Hyperparameter Tuning.**
   - **Goal:** Use a systematic approach (e.g., Optuna) to tune the `LGBMRanker` hyperparameters and optimize for `NDCG@3`.

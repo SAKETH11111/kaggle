@@ -210,6 +210,80 @@ class FeatureEngineer:
         
         return group_features
     
+    def create_json_interaction_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create interaction features with the aggregated JSON data."""
+        logger.info("Creating interaction features with JSON data...")
+
+        json_interaction_features = df.with_columns([
+            # Price relative to the average price in the search
+            (pl.col("total_price") / pl.col("avg_total_price")).alias("price_vs_avg_search_price"),
+
+            # Whether this flight's price is above or below the average
+            (pl.col("total_price") > pl.col("avg_total_price")).cast(pl.Int32).alias("is_pricier_than_average"),
+
+            # Interaction between policy compliance of the flight and the search average
+            (pl.col("policy_compliant") * pl.col("avg_policy_compliant")).alias("policy_compliance_interaction"),
+        ])
+
+        return json_interaction_features
+
+    def create_carrier_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create features specific to airline carriers."""
+        logger.info("Creating carrier-specific features...")
+
+        carrier_features = df.with_columns([
+            # Carrier Frequency: How many flights a carrier has in the search
+            (pl.col("marketing_carrier").count().over("ranker_id", "marketing_carrier")).alias("carrier_frequency_in_search"),
+
+            # Carrier Market Share: The percentage of flights a carrier has in the search
+            (pl.col("marketing_carrier").count().over("ranker_id", "marketing_carrier") / pl.col("ranker_id").count().over("ranker_id")).alias("carrier_market_share")
+        ])
+
+        return carrier_features
+
+    def create_route_complexity_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create features related to the complexity of the flight route."""
+        logger.info("Creating route complexity features...")
+
+        # Count the number of segments for the first leg
+        # This requires checking for the existence of segment columns
+        segment_cols = [col for col in df.columns if "legs0_segments" in col and "departureFrom" in col]
+        num_segments = len(segment_cols)
+
+        # Calculate layover duration if there are connections
+        if num_segments > 1:
+            layover_duration_expr = (
+                pl.col("legs0_segments1_departureAt").str.to_datetime() - pl.col("legs0_segments0_arrivalAt").str.to_datetime()
+            ).dt.minutes().alias("layover_duration_minutes")
+        else:
+            layover_duration_expr = pl.lit(0).alias("layover_duration_minutes")
+
+        route_complexity_features = df.with_columns([
+            pl.lit(num_segments).alias("num_segments"),
+            layover_duration_expr
+        ])
+
+        return route_complexity_features
+
+    def create_advanced_time_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create advanced time-based features, including booking window and trip duration."""
+        logger.info("Creating advanced time features...")
+
+        advanced_time_features = df.with_columns([
+            # Booking Window: Difference between request and departure date
+            (pl.col("departure_datetime") - pl.col("request_time").str.to_datetime()).dt.days().alias("booking_window_days"),
+
+            # Trip Duration: Difference between return and departure date
+            (pl.col("requestReturnDate").str.to_datetime() - pl.col("requestDepartureDate").str.to_datetime()).dt.days().alias("trip_duration_days"),
+
+            # "Red-Eye" Flight Indicator: Departs late (e.g., after 10 PM) and arrives early (e.g., before 5 AM)
+            (
+                (pl.col("departure_hour") >= 22) & (pl.col("arrival_hour") <= 5)
+            ).cast(pl.Int32).alias("is_red_eye_flight"),
+        ])
+
+        return advanced_time_features
+
     def create_interaction_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
         """Create interaction features between different aspects"""
         logger.info("Creating interaction features...")
@@ -247,6 +321,10 @@ class FeatureEngineer:
         # Apply all feature engineering steps
         df = self.create_price_features(df)
         df = self.create_time_features(df)
+        df = self.create_advanced_time_features(df)
+        df = self.create_route_complexity_features(df)
+        df = self.create_carrier_features(df)
+        df = self.create_json_interaction_features(df)
         df = self.create_route_features(df)
         df = self.create_policy_features(df)
         df = self.create_group_features(df)
