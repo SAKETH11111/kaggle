@@ -30,7 +30,7 @@ def objective(trial: optuna.trial.Trial) -> float:
         'metric': 'ndcg',
         'random_state': RANDOM_SEED,
         'n_jobs': -1,
-        'device': 'gpu',  # Ensure we are using the GPU
+        'device': 'cpu',  
         'n_estimators': 1000, # High value, will be controlled by early stopping
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'num_leaves': trial.suggest_int('num_leaves', 31, 255),
