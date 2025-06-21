@@ -250,11 +250,15 @@ class FeatureEngineer:
         segment_cols = [col for col in df.columns if "legs0_segments" in col and "departureFrom" in col]
         num_segments = len(segment_cols)
 
-        # Calculate layover duration if there are connections
-        if num_segments > 1:
+        # Calculate layover duration only when both segment timestamp columns are present
+        seg1_dep_col = "legs0_segments1_departureAt"
+        seg0_arr_col = "legs0_segments0_arrivalAt"
+
+        if seg1_dep_col in df.columns and seg0_arr_col in df.columns:
             layover_duration_expr = (
-                pl.col("legs0_segments1_departureAt").str.to_datetime() - pl.col("legs0_segments0_arrivalAt").str.to_datetime()
-            ).dt.minutes().alias("layover_duration_minutes")
+                pl.col(seg1_dep_col).str.to_datetime() - pl.col(seg0_arr_col).str.to_datetime()
+            ).dt.total_seconds() / 60
+            layover_duration_expr = layover_duration_expr.cast(pl.Int32).alias("layover_duration_minutes")
         else:
             layover_duration_expr = pl.lit(0).alias("layover_duration_minutes")
 
@@ -269,12 +273,37 @@ class FeatureEngineer:
         """Create advanced time-based features, including booking window and trip duration."""
         logger.info("Creating advanced time features...")
 
-        advanced_time_features = df.with_columns([
-            # Booking Window: Difference between request and departure date
-            (pl.col("departure_datetime") - pl.col("request_time").str.to_datetime()).dt.days().alias("booking_window_days"),
+        # Ensure optional request-related columns exist so that Polars' expression planner
+        # does not raise ColumnNotFound errors when they are absent in the input schema.
+        optional_cols = ["requestDate", "requestDepartureDate", "requestReturnDate"]
+        for col_name in optional_cols:
+            if col_name not in df.columns:
+                df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col_name))
 
-            # Trip Duration: Difference between return and departure date
-            (pl.col("requestReturnDate").str.to_datetime() - pl.col("requestDepartureDate").str.to_datetime()).dt.days().alias("trip_duration_days"),
+        # Ensure all request-related columns are Utf8 so .str namespace is available regardless of source dtype.
+        df = df.with_columns([
+            pl.col("requestDate").cast(pl.Utf8).alias("requestDate"),
+            pl.col("requestDepartureDate").cast(pl.Utf8).alias("requestDepartureDate"),
+            pl.col("requestReturnDate").cast(pl.Utf8).alias("requestReturnDate"),
+        ])
+
+        advanced_time_features = df.with_columns([
+            # Booking window: difference between search request date and flight departure date.
+            # Prefer a dedicated search timestamp column if present; otherwise, use requestDepartureDate (date selected by traveller).
+            (
+                pl.col("departure_datetime")
+                - pl.coalesce([
+                    pl.when(pl.col("requestDate").is_not_null())
+                      .then(pl.col("requestDate").str.to_datetime())
+                      .otherwise(pl.col("requestDepartureDate").str.to_datetime())
+                ])
+            ).dt.total_days().cast(pl.Int32).alias("booking_window_days"),
+
+            # Trip Duration: Difference between return and departure date (in days)
+            (
+                pl.col("requestReturnDate").str.to_datetime()
+                - pl.col("requestDepartureDate").str.to_datetime()
+            ).dt.total_days().cast(pl.Int32).alias("trip_duration_days"),
 
             # "Red-Eye" Flight Indicator: Departs late (e.g., after 10 PM) and arrives early (e.g., before 5 AM)
             (
@@ -282,6 +311,8 @@ class FeatureEngineer:
             ).cast(pl.Int32).alias("is_red_eye_flight"),
         ])
 
+        # Remove raw request date columns to avoid dtype conflicts downstream
+        advanced_time_features = advanced_time_features.drop(optional_cols)
         return advanced_time_features
 
     def create_interaction_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
@@ -322,14 +353,20 @@ class FeatureEngineer:
         df = self.create_price_features(df)
         df = self.create_time_features(df)
         df = self.create_advanced_time_features(df)
-        df = self.create_route_complexity_features(df)
-        df = self.create_carrier_features(df)
-        df = self.create_json_interaction_features(df)
+        # Route-related base features first (creates marketing_carrier etc.)
         df = self.create_route_features(df)
         df = self.create_policy_features(df)
+        df = self.create_carrier_features(df)
+        df = self.create_route_complexity_features(df)
+        df = self.create_json_interaction_features(df)
         df = self.create_group_features(df)
         df = self.create_interaction_features(df)
         
+        # Drop raw request date columns if they remain to avoid dtype issues
+        for col_to_drop in ["requestDate", "requestDepartureDate", "requestReturnDate"]:
+            if col_to_drop in df.columns:
+                df = df.drop(col_to_drop)
+
         logger.info("Feature engineering complete!")
         return df
     
