@@ -42,6 +42,14 @@ def generate_predictions(test_df: pl.DataFrame) -> np.ndarray:
         
         feature_cols = booster.feature_name()
         X_test = test_df[feature_cols].to_pandas()
+# Ensure only numeric and boolean columns are used for prediction
+        numeric_features = X_test.select_dtypes(include=np.number).columns.tolist()
+        boolean_features = X_test.select_dtypes(include=np.bool_).columns.tolist()
+        X_test = X_test[numeric_features + boolean_features]
+
+        # Convert object columns to categorical for LightGBM
+        for col in X_test.select_dtypes(include=['object']).columns:
+            X_test[col] = X_test[col].astype('category')
         
         preds = booster.predict(X_test)
         all_preds.append(preds)
@@ -50,17 +58,24 @@ def generate_predictions(test_df: pl.DataFrame) -> np.ndarray:
     return np.mean(all_preds, axis=0)
 
 def create_submission_file(test_df: pl.DataFrame, predictions: np.ndarray):
-    """Creates the final submission file."""
+    """Creates the final submission file in the correct format."""
     logger.info("Creating submission file...")
-    submission_df = test_df.select(["Id", "ranker_id"]).with_columns(
+    
+    # Add the predictions to the test dataframe
+    submission_df = test_df.with_columns(
         pl.Series("predicted_score", predictions)
     )
 
+    # Rank the predictions within each group
     submission_df = submission_df.with_columns(
         pl.col("predicted_score").rank(method="ordinal", descending=True).over("ranker_id").alias("selected")
     )
 
+    # Select only the required columns for submission
     submission_df = submission_df.select(["Id", "selected"])
+    
+    # Ensure the submission is sorted by the original Id to maintain row order
+    submission_df = submission_df.sort("Id")
     
     submission_path = PROCESSED_DIR / "submission.csv"
     submission_df.write_csv(submission_path)
