@@ -332,9 +332,10 @@ class CrossValidationUtils:
         """
         cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
         
-        X = df.select('Id')
-        y = df.select(stratify_col)
-        groups = df.select(group_col)
+        # Convert to numpy arrays for sklearn
+        X = df.select('Id').to_numpy()
+        y = df.select(stratify_col).to_numpy().ravel()
+        groups = df.select(group_col).to_numpy().ravel()
 
         splits = list(cv.split(X, y, groups))
         

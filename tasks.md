@@ -54,7 +54,7 @@ This phase focuses on building and evaluating a baseline `LGBMRanker` model.
 
 - **Task 5: End-to-End Pipeline Integration.**
   - **Goal:** Create a `run_training.py` script that connects all components: data preparation, cross-validation, training, evaluation, and logging. This script will execute the full baseline model training and evaluation workflow.
-  - **Status:** ✅ Completed
+  - **Status:** pending
 
 ## Phase 3: Advanced Feature Engineering & Tuning (Day 4)
 
