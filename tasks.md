@@ -68,6 +68,14 @@ This phase focuses on advanced feature engineering and optimizing the `LGBMRanke
   - **Goal:** Use a systematic approach (e.g., Optuna) to tune the `LGBMRanker` hyperparameters and optimize for `NDCG@3`.
   - **Status:** ✅ Completed
 
-- **Task 3: Final Model Training and Submission.**
-  - **Goal:** Train the final model on the full dataset using the best features and hyperparameters, and generate the submission file.
-  - **Status:** Pending
+- **Task 3: Feature Importance and SHAP Analysis.**
+  - **Goal:** Generate and analyze feature importance and SHAP values from the trained model to understand key drivers of performance and validate feature engineering decisions.
+  - **Status:** ✅ Completed
+
+- **Task 4: Enhance Logging and Reproducibility.**
+  - **Goal:** Improve the logging to capture all critical information for reproducibility, including best hyperparameters, fold-wise performance metrics, and random seeds.
+  - **Status:** ✅ Completed
+
+- **Task 5: Final Predictions and Ensembling.**
+  - **Goal:** Generate final predictions using an ensemble of the 5-fold models and the single model trained on the full dataset, preparing the results for submission.
+  - **Status:** ✅ Completed

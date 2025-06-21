@@ -130,5 +130,12 @@ def main():
         json.dump(study.best_params, f, indent=4)
     logger.info(f"Best parameters saved to {best_params_path}")
 
+    # Save the full study results
+    study_results_path = Path("processed/optuna_study_results.pkl")
+    with open(study_results_path, "wb") as f:
+        import pickle
+        pickle.dump(study, f)
+    logger.info(f"Full Optuna study results saved to {study_results_path}")
+
 if __name__ == "__main__":
     main()

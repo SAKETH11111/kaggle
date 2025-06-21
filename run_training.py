@@ -178,5 +178,18 @@ def main():
     oof_df.write_parquet("processed/oof_predictions.parquet")
     logger.info("Out-of-fold predictions saved to processed/oof_predictions.parquet")
 
+    # --- 6. Save CV Results ---
+    cv_results = {
+        "avg_hitrate_at_3": avg_hit_rate,
+        "fold_scores": fold_scores,
+        "model_params": MODEL_PARAMS,
+        "n_splits": N_SPLITS,
+        "random_seed": RANDOM_SEED,
+    }
+    cv_results_path = Path("processed/cv_results.json")
+    with open(cv_results_path, 'w') as f:
+        json.dump(cv_results, f, indent=4)
+    logger.info(f"Cross-validation results saved to {cv_results_path}")
+
 if __name__ == "__main__":
     main()

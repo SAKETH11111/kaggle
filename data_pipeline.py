@@ -335,6 +335,12 @@ class DataPipeline:
         self.loader = MemoryEfficientLoader(self.config)
         self.validator = DataQualityValidator(self.config)
         self.json_extractor = JSONFeatureExtractor(self.config)
+        # Expose a single FeatureEngineer instance so that external callers
+        # (e.g. inference pipelines) can reuse the same transformations.
+        # This avoids duplicated initialization and keeps feature logic
+        # centralized in one place.
+        from feature_engineering import FeatureEngineer  # local import to avoid cycles
+        self.feature_engineer = FeatureEngineer()
         
     def initialize_pipeline(self) -> Dict:
         """Initialize the data pipeline and run basic validation"""
@@ -418,9 +424,9 @@ class DataPipeline:
         # Join structured data with JSON features
         combined_lf = structured_lf.join(json_features_lf, on="ranker_id", how="left")
 
-        # Instantiate the feature engineer and apply all transformations
-        feature_engineer = FeatureEngineer()
-        engineered_lf = feature_engineer.engineer_all_features(combined_lf)
+        # Apply the same feature engineering pipeline that will also be used
+        # at inference time.
+        engineered_lf = self.feature_engineer.engineer_all_features(combined_lf)
 
         # Filter by profile_ids if provided (for cross-validation)
         if profile_ids:
