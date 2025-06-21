@@ -32,9 +32,8 @@ def objective(trial: optuna.trial.Trial) -> float:
         'metric': 'ndcg',
         'random_state': RANDOM_SEED,
         'n_jobs': -1,
-        # Use CPU device by default to avoid errors when LightGBM is not compiled with CUDA support.
-        # Change to "gpu" only if a GPU-enabled LightGBM build is available.
-        'device': 'cpu',
+        # Use CUDA device for NVIDIA GPUs.
+        'device': 'cuda',
         'n_estimators': 1000,
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'num_leaves': trial.suggest_int('num_leaves', 31, 255),
@@ -87,7 +86,7 @@ def objective(trial: optuna.trial.Trial) -> float:
 
         # --- 4. Model Training ---
         trainer = RankerTrainer(model_params=params)
-        pruning_callback = LightGBMPruningCallback(trial, "ndcg@3")
+        pruning_callback = LightGBMPruningCallback(trial, "ndcg@3", valid_name="valid_0")
         early_stopping_cb = lgb.early_stopping(stopping_rounds=100, verbose=False)
         callbacks = [pruning_callback, early_stopping_cb]
         trainer.train(X_train, y_train, group_train, X_val, y_val, group_val, callbacks=callbacks)
