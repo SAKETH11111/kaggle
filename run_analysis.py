@@ -38,6 +38,16 @@ def main():
     feature_cols = booster.feature_name()
     X = full_df[feature_cols].to_pandas()
 
+    # Convert object columns to categorical for SHAP
+    for col in X.select_dtypes(include=['object']).columns:
+        X[col] = X[col].astype('category')
+
+    # Convert datetime columns to numeric int64 (nanoseconds since epoch) to avoid dtype promotion issues
+    datetime_cols = X.select_dtypes(include=['datetime', 'datetimetz']).columns
+    for col in datetime_cols:
+        # Preserve missing values while converting to int64
+        X[col] = X[col].view('int64')
+
     # --- 2. Feature Importance Analysis ---
     logger.info("Generating feature importance plot...")
     lgb.plot_importance(booster, max_num_features=30, figsize=(10, 15))
