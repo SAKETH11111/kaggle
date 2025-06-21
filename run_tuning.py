@@ -38,12 +38,13 @@ def objective(trial: optuna.trial.Trial) -> float:
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'num_leaves': trial.suggest_int('num_leaves', 31, 255),
         'max_depth': trial.suggest_int('max_depth', 5, 15),
-        'min_child_samples': trial.suggest_int('min_child_samples', 20, 100), # Increased lower bound
-        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-        'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 1.0, log=True),
-        'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 1.0, log=True),
-        'min_gain_to_split': trial.suggest_float('min_gain_to_split', 0.0, 0.3),
+        'min_child_samples': trial.suggest_int('min_child_samples', 20, 100),
+        'feature_fraction': trial.suggest_float('feature_fraction', 0.7, 1.0),
+        'bagging_fraction': trial.suggest_float('bagging_fraction', 0.7, 1.0),
+        'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
+        'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
+        'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
+        'min_gain_to_split': trial.suggest_float('min_gain_to_split', 0, 15),
     }
 
     # --- 2. Data Preparation ---
