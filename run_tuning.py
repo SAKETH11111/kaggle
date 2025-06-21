@@ -31,7 +31,9 @@ def objective(trial: optuna.trial.Trial) -> float:
         'metric': 'ndcg',
         'random_state': RANDOM_SEED,
         'n_jobs': -1,
-        'device': 'cuda',
+        # Use CPU device by default to avoid errors when LightGBM is not compiled with CUDA support.
+        # Change to "gpu" only if a GPU-enabled LightGBM build is available.
+        'device': 'cpu',
         'n_estimators': 1000,
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'num_leaves': trial.suggest_int('num_leaves', 31, 255),
