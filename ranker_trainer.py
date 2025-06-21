@@ -24,7 +24,7 @@ class RankerTrainer:
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-    def train(self, X_train, y_train, group_train, X_val, y_val, group_val):
+    def train(self, X_train, y_train, group_train, X_val, y_val, group_val, callbacks: list = None):
         """
         Trains the LGBMRanker model.
         """
@@ -36,7 +36,7 @@ class RankerTrainer:
             X_train, y_train, group=group_train,
             eval_set=[(X_val, y_val)], eval_group=[group_val],
             eval_at=[3], eval_metric="ndcg",
-            callbacks=[lgb.early_stopping(50, verbose=True)]
+            callbacks=callbacks
         )
         logger.info("Model training complete.")
 

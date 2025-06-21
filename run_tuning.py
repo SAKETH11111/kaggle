@@ -4,6 +4,7 @@ import numpy as np
 import logging
 from pathlib import Path
 import json
+from optuna.integration import LightGBMPruningCallback
 
 from data_pipeline import DataPipeline, DataConfig
 from ranker_trainer import RankerTrainer
@@ -30,16 +31,17 @@ def objective(trial: optuna.trial.Trial) -> float:
         'metric': 'ndcg',
         'random_state': RANDOM_SEED,
         'n_jobs': -1,
-        'device': 'cpu',  
-        'n_estimators': 1000, # High value, will be controlled by early stopping
+        'device': 'cuda',
+        'n_estimators': 1000,
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'num_leaves': trial.suggest_int('num_leaves', 31, 255),
         'max_depth': trial.suggest_int('max_depth', 5, 15),
-        'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
-        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+        'min_child_samples': trial.suggest_int('min_child_samples', 20, 100), # Increased lower bound
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
         'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 5.0, log=True),
         'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 5.0, log=True),
+        'min_gain_to_split': trial.suggest_float('min_gain_to_split', 0, 15), # Added this parameter
     }
 
     # --- 2. Data Preparation ---
@@ -82,7 +84,8 @@ def objective(trial: optuna.trial.Trial) -> float:
 
         # --- 4. Model Training ---
         trainer = RankerTrainer(model_params=params)
-        trainer.train(X_train, y_train, group_train, X_val, y_val, group_val)
+        pruning_callback = LightGBMPruningCallback(trial, "ndcg@3")
+        trainer.train(X_train, y_train, group_train, X_val, y_val, group_val, callbacks=[pruning_callback])
         
         # The evaluation metric (NDCG@3) is automatically calculated by LightGBM's fit method.
         # We retrieve the best score from the validation set.

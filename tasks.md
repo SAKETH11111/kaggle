@@ -66,7 +66,7 @@ This phase focuses on advanced feature engineering and optimizing the `LGBMRanke
 
 - **Task 2: Hyperparameter Tuning.**
   - **Goal:** Use a systematic approach (e.g., Optuna) to tune the `LGBMRanker` hyperparameters and optimize for `NDCG@3`.
-  - **Status:** Pending
+  - **Status:** ✅ Completed
 
 - **Task 3: Final Model Training and Submission.**
   - **Goal:** Train the final model on the full dataset using the best features and hyperparameters, and generate the submission file.
