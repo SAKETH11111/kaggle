@@ -17,6 +17,21 @@
 - [x] Create feature store API with caching.
 - [x] Generate comprehensive report documenting the work.
 
+- [x] 1. **Environment bootstrap**: Set up the Conda environment and Dockerfile.
+- [x] 2. **Structured parquet ingestion skeleton**: Create a memory-efficient data loader for parquet files.
+- [x] 3. **Integrity & leakage audit**: Build a script to validate data integrity and prevent leakage.
+- [x] 4. **JSON archive reconnaissance**: Analyze a sample of the JSON data to understand its structure.
+- [x] 5. **Feature-selection workshop**: Define the high-value features to be extracted from the JSON files.
+- [x] 6. **Parallel-extraction architecture design**: Design the architecture for parallel JSON processing.
+- [x] 7. **Data-flow automation**: Create a Makefile and CI pipeline for automation.
+- [x] 8. **Full-scale JSON extraction run**: Execute the parallel extraction on the entire dataset.
+- [x] 9. **Feature block post-processing**: Clean and transform the extracted JSON features.
+- [x] 10. **Merge structured + JSON features**: Join the structured data with the new JSON features.
+- [x] 11. **Memory & performance benchmark**: Benchmark the performance of the new dataset.
+- [x] 12. **Data-leakage guards**: Implement safeguards to prevent data leakage between train and test sets.
+- [x] 13. **Feature-store API scaffolding**: Create an API for accessing the feature store.
+- [x] 14. **Documentation & hand-off**: Document the work and prepare for the next phase.
+
 ## Phase 2: LGBM Ranker Integration (Day 3) - COMPLETED
 
 This phase focuses on building and evaluating a baseline `LGBMRanker` model.
