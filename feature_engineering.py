@@ -15,371 +15,255 @@ import logging
 logger = logging.getLogger(__name__)
 
 class FeatureEngineer:
-    """Advanced feature engineering for flight ranking"""
-    
+    """A robust feature engineering pipeline for the FlightRank 2025 competition."""
+
     def __init__(self):
-        self.price_features = []
-        self.time_features = []
-        self.route_features = []
-        self.policy_features = []
-        
-    def create_price_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create price-related features"""
-        logger.info("Creating price features...")
-        
-        price_features = df.with_columns([
-            # Basic price features
-            pl.col("totalPrice").alias("total_price"),
-            pl.col("taxes").alias("tax_amount"),
-            (pl.col("totalPrice") - pl.col("taxes")).alias("base_price"),
-            (pl.col("taxes") / pl.col("totalPrice")).alias("tax_rate"),
-            
-            # Price ranking within group
-            pl.col("totalPrice").rank(method="ordinal").over("ranker_id").alias("price_rank"),
-            pl.col("totalPrice").rank(method="ordinal", descending=True).over("ranker_id").alias("price_rank_desc"),
-            
-            # Price statistics within group
-            (pl.col("totalPrice") - pl.col("totalPrice").mean().over("ranker_id")).alias("price_diff_from_mean"),
-            (pl.col("totalPrice") - pl.col("totalPrice").min().over("ranker_id")).alias("price_diff_from_min"),
-            (pl.col("totalPrice") - pl.col("totalPrice").max().over("ranker_id")).alias("price_diff_from_max"),
-            
-            # Price percentiles within group
-            ((pl.col("totalPrice").rank().over("ranker_id") - 1) / 
-             (pl.col("totalPrice").count().over("ranker_id") - 1)).alias("price_percentile"),
-             
-            # Price bins
-            pl.col("totalPrice").qcut(5, labels=["very_cheap", "cheap", "medium", "expensive", "very_expensive"]).alias("price_bin")
-        ])
-        
-        return price_features
-    
-    def create_time_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create time-related features"""
-        logger.info("Creating time features...")
-        
-        # Convert duration strings to minutes
-        def duration_to_minutes(duration_col):
-            duration_struct = (
-                pl.col(duration_col)
-                .str.extract_groups(r"(\d+):(\d+):(\d+)")
-                .struct.rename_fields(["hours", "minutes", "seconds"])
-            )
-            return (
-                duration_struct.struct.field("hours").cast(pl.Int32) * 60 +
-                duration_struct.struct.field("minutes").cast(pl.Int32)
-            )
-        
-        time_features = df.with_columns([
-            # Parse departure and arrival times
-            pl.col("legs0_departureAt").str.to_datetime().alias("departure_datetime"),
-            pl.col("legs0_arrivalAt").str.to_datetime().alias("arrival_datetime"),
-            
-            # Duration features
-            duration_to_minutes("legs0_duration").alias("total_duration_minutes"),
-            
-            # Time of day features
-            pl.col("legs0_departureAt").str.to_datetime().dt.hour().alias("departure_hour"),
-            pl.col("legs0_arrivalAt").str.to_datetime().dt.hour().alias("arrival_hour"),
-            
-            # Day of week features
-            pl.col("legs0_departureAt").str.to_datetime().dt.weekday().alias("departure_weekday"),
-            
-            # Time categories
-            pl.when(pl.col("legs0_departureAt").str.to_datetime().dt.hour().is_between(6, 11))
-              .then(pl.lit("morning"))
-              .when(pl.col("legs0_departureAt").str.to_datetime().dt.hour().is_between(12, 17))
-              .then(pl.lit("afternoon"))
-              .when(pl.col("legs0_departureAt").str.to_datetime().dt.hour().is_between(18, 21))
-              .then(pl.lit("evening"))
-              .otherwise(pl.lit("night"))
-              .alias("departure_time_category")
-        ])
-        
-        # Add duration ranking and statistics within group
-        time_features = time_features.with_columns([
-            pl.col("total_duration_minutes").rank().over("ranker_id").alias("duration_rank"),
-            (pl.col("total_duration_minutes") - pl.col("total_duration_minutes").mean().over("ranker_id")).alias("duration_diff_from_mean"),
-            ((pl.col("total_duration_minutes").rank().over("ranker_id") - 1) / 
-             (pl.col("total_duration_minutes").count().over("ranker_id") - 1)).alias("duration_percentile")
-        ])
-        
-        return time_features
-    
-    def create_route_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create route and airline features"""
-        logger.info("Creating route features...")
-        
-        route_features = df.with_columns([
-            # Route features
-            pl.col("searchRoute").alias("search_route"),
-            pl.col("searchRoute").str.contains("/").alias("is_roundtrip"),
-            
-            # Airport features
-            pl.col("legs0_segments0_departureFrom_airport_iata").alias("origin_airport"),
-            pl.col("legs0_segments0_arrivalTo_airport_iata").alias("destination_airport"),
-            
-            # Airline features
-            pl.col("legs0_segments0_marketingCarrier_code").alias("marketing_carrier"),
-            pl.col("legs0_segments0_operatingCarrier_code").alias("operating_carrier"),
-            (pl.col("legs0_segments0_marketingCarrier_code") == 
-             pl.col("legs0_segments0_operatingCarrier_code")).alias("same_marketing_operating"),
-             
-            # Aircraft features
-            pl.col("legs0_segments0_aircraft_code").alias("aircraft_code"),
-            
-            # Connection features (if segment 1 exists)
-            pl.col("legs0_segments1_departureFrom_airport_iata").is_not_null().alias("has_connection"),
-            
-            # Cabin class features
-            pl.col("legs0_segments0_cabinClass").alias("cabin_class"),
-            pl.when(pl.col("legs0_segments0_cabinClass") == 1.0)
-              .then(pl.lit("economy"))
-              .when(pl.col("legs0_segments0_cabinClass") == 2.0)
-              .then(pl.lit("business"))
-              .when(pl.col("legs0_segments0_cabinClass") == 4.0)
-              .then(pl.lit("premium"))
-              .otherwise(pl.lit("unknown"))
-              .alias("cabin_class_name"),
-              
-            # Seats available
-            pl.col("legs0_segments0_seatsAvailable").alias("seats_available"),
-            
-            # Baggage allowance
-            pl.col("legs0_segments0_baggageAllowance_quantity").alias("baggage_quantity")
-        ])
-        
-        return route_features
-    
-    def create_policy_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create policy and compliance features"""
-        logger.info("Creating policy features...")
-        
-        policy_features = df.with_columns([
-            # Corporate features
-            pl.col("corporateTariffCode").alias("corporate_tariff"),
-            pl.col("corporateTariffCode").is_not_null().alias("has_corporate_tariff"),
-            
-            # Travel policy compliance
-            pl.col("pricingInfo_isAccessTP").alias("policy_compliant"),
-            
-            # User features
-            pl.col("profileId").alias("profile_id"),
-            pl.col("companyID").alias("company_id"),
-            pl.col("sex").alias("user_gender"),
-            pl.col("nationality").alias("user_nationality"),
-            pl.col("frequentFlyer").alias("frequent_flyer_programs"),
-            pl.col("isVip").alias("is_vip"),
-            pl.col("bySelf").alias("books_by_self"),
-            
-            # Cancellation and exchange rules
-            pl.col("miniRules0_statusInfos").alias("can_cancel"),
-            pl.col("miniRules1_statusInfos").alias("can_exchange"),
-            pl.col("miniRules0_monetaryAmount").alias("cancellation_fee"),
-            pl.col("miniRules1_monetaryAmount").alias("exchange_fee"),
-            
-            # Rule costs as percentage of ticket price
-            (pl.col("miniRules0_monetaryAmount") / pl.col("totalPrice")).alias("cancellation_fee_rate"),
-            (pl.col("miniRules1_monetaryAmount") / pl.col("totalPrice")).alias("exchange_fee_rate")
-        ])
-        
-        return policy_features
-    
-    def create_group_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create group-level features within ranker_id"""
-        logger.info("Creating group features...")
-        
-        group_features = df.with_columns([
-            # Group size
-            pl.count().over("ranker_id").alias("group_size"),
-            
-            # Position in group (by price, duration, etc.)
-            pl.col("totalPrice").rank().over("ranker_id").alias("price_position_in_group"),
-            pl.col("legs0_duration").rank().over("ranker_id").alias("duration_position_in_group"),
-            
-            # Group statistics
-            pl.col("totalPrice").std().over("ranker_id").alias("group_price_std"),
-            pl.col("totalPrice").max().over("ranker_id") - pl.col("totalPrice").min().over("ranker_id").alias("group_price_range"),
-            
-            # Company diversity in group
-            pl.col("legs0_segments0_marketingCarrier_code").n_unique().over("ranker_id").alias("unique_carriers_in_group"),
-            pl.col("legs0_segments0_cabinClass").n_unique().over("ranker_id").alias("unique_cabin_classes_in_group"),
-            
-            # Policy compliance rate in group
-            pl.col("pricingInfo_isAccessTP").mean().over("ranker_id").alias("group_policy_compliance_rate")
-        ])
-        
-        return group_features
-    
-    def create_json_interaction_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create interaction features with the aggregated JSON data."""
-        logger.info("Creating interaction features with JSON data...")
+        """Initializes the FeatureEngineer."""
+        logger.info("FeatureEngineer initialized.")
 
-        json_interaction_features = df.with_columns([
-            # Price relative to the average price in the search
-            (pl.col("total_price") / pl.col("avg_total_price")).alias("price_vs_avg_search_price"),
+    def create_price_intelligence_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Creates advanced price-based features based on session-level statistics."""
+        logger.info("Creating price intelligence features...")
+        
+        if "totalPrice" not in df.columns:
+            logger.warning("'totalPrice' not found. Skipping price intelligence features.")
+            return df
 
-            # Whether this flight's price is above or below the average
-            (pl.col("total_price") > pl.col("avg_total_price")).cast(pl.Int32).alias("is_pricier_than_average"),
-
-            # Interaction between policy compliance of the flight and the search average
-            (pl.col("policy_compliant") * pl.col("avg_policy_compliant")).alias("policy_compliance_interaction"),
+        session_stats = df.group_by("ranker_id").agg([
+            pl.min("totalPrice").alias("min_price"),
+            pl.median("totalPrice").alias("median_price"),
+            pl.mean("totalPrice").alias("mean_price"),
+            pl.std("totalPrice").alias("std_price")
         ])
 
-        return json_interaction_features
+        df = df.join(session_stats, on="ranker_id", how="left")
 
-    def create_carrier_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create features specific to airline carriers."""
-        logger.info("Creating carrier-specific features...")
-
-        carrier_features = df.with_columns([
-            # Carrier Frequency: How many flights a carrier has in the search
-            (pl.col("marketing_carrier").count().over("ranker_id", "marketing_carrier")).alias("carrier_frequency_in_search"),
-
-            # Carrier Market Share: The percentage of flights a carrier has in the search
-            (pl.col("marketing_carrier").count().over("ranker_id", "marketing_carrier") / pl.col("ranker_id").count().over("ranker_id")).alias("carrier_market_share")
-        ])
-
-        return carrier_features
-
-    def create_route_complexity_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create features related to the complexity of the flight route."""
-        logger.info("Creating route complexity features...")
-
-        # Count the number of segments for the first leg
-        # This requires checking for the existence of segment columns
-        segment_cols = [col for col in df.columns if "legs0_segments" in col and "departureFrom" in col]
-        num_segments = len(segment_cols)
-
-        # Calculate layover duration only when both segment timestamp columns are present
-        seg1_dep_col = "legs0_segments1_departureAt"
-        seg0_arr_col = "legs0_segments0_arrivalAt"
-
-        if seg1_dep_col in df.columns and seg0_arr_col in df.columns:
-            layover_duration_expr = (
-                pl.col(seg1_dep_col).str.to_datetime() - pl.col(seg0_arr_col).str.to_datetime()
-            ).dt.total_seconds() / 60
-            layover_duration_expr = layover_duration_expr.cast(pl.Int32).alias("layover_duration_minutes")
-        else:
-            layover_duration_expr = pl.lit(0).alias("layover_duration_minutes")
-
-        route_complexity_features = df.with_columns([
-            pl.lit(num_segments).alias("num_segments"),
-            layover_duration_expr
-        ])
-
-        return route_complexity_features
-
-    def create_advanced_time_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create advanced time-based features, including booking window and trip duration."""
-        logger.info("Creating advanced time features...")
-
-        # Ensure optional request-related columns exist so that Polars' expression planner
-        # does not raise ColumnNotFound errors when they are absent in the input schema.
-        optional_cols = ["requestDate", "requestDepartureDate", "requestReturnDate"]
-        for col_name in optional_cols:
-            if col_name not in df.columns:
-                df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col_name))
-
-        # Ensure all request-related columns are Utf8 so .str namespace is available regardless of source dtype.
         df = df.with_columns([
-            pl.col("requestDate").cast(pl.Utf8).alias("requestDate"),
-            pl.col("requestDepartureDate").cast(pl.Utf8).alias("requestDepartureDate"),
-            pl.col("requestReturnDate").cast(pl.Utf8).alias("requestReturnDate"),
-        ])
-
-        advanced_time_features = df.with_columns([
-            # Booking window: difference between search request date and flight departure date.
-            # Prefer a dedicated search timestamp column if present; otherwise, use requestDepartureDate (date selected by traveller).
-            (
-                pl.col("departure_datetime")
-                - pl.coalesce([
-                    pl.when(pl.col("requestDate").is_not_null())
-                      .then(pl.col("requestDate").str.to_datetime())
-                      .otherwise(pl.col("requestDepartureDate").str.to_datetime())
-                ])
-            ).dt.total_days().cast(pl.Int32).alias("booking_window_days"),
-
-            # Trip Duration: Difference between return and departure date (in days)
-            (
-                pl.col("requestReturnDate").str.to_datetime()
-                - pl.col("requestDepartureDate").str.to_datetime()
-            ).dt.total_days().cast(pl.Int32).alias("trip_duration_days"),
-
-            # "Red-Eye" Flight Indicator: Departs late (e.g., after 10 PM) and arrives early (e.g., before 5 AM)
-            (
-                (pl.col("departure_hour") >= 22) & (pl.col("arrival_hour") <= 5)
-            ).cast(pl.Int32).alias("is_red_eye_flight"),
-        ])
-
-        # Remove raw request date columns to avoid dtype conflicts downstream
-        advanced_time_features = advanced_time_features.drop(optional_cols)
-        return advanced_time_features
-
-    def create_interaction_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Create interaction features between different aspects"""
-        logger.info("Creating interaction features...")
-        
-        interaction_features = df.with_columns([
-            # Price vs Duration trade-off
-            (pl.col("totalPrice") * pl.col("total_duration_minutes")).alias("price_duration_interaction"),
-            (pl.col("price_rank") + pl.col("duration_rank")).alias("combined_rank_score"),
+            (((pl.col("totalPrice") - pl.col("min_price")) / pl.col("min_price")))
+             .fill_nan(0).fill_null(0).alias("rel_price_vs_min"),
             
-            # VIP and price interaction
-            (pl.col("isVip").cast(pl.Int32) * pl.col("totalPrice")).alias("vip_price_interaction"),
-            
-            # Corporate tariff and policy compliance
-            (pl.col("has_corporate_tariff").cast(pl.Int32) * pl.col("pricingInfo_isAccessTP").cast(pl.Int32)).alias("corporate_policy_interaction"),
-            
-            # Time convenience score (prefer morning/afternoon flights)
-            pl.when(pl.col("departure_time_category").is_in(["morning", "afternoon"]))
-              .then(pl.lit(1))
-              .otherwise(pl.lit(0))
-              .alias("convenient_time_score"),
-              
-            # Weekend travel indicator
-            (pl.col("departure_weekday") >= 5).cast(pl.Int32).alias("weekend_departure"),
-            
-            # Premium service indicators
-            ((pl.col("cabin_class") > 1.0) | pl.col("isVip")).cast(pl.Int32).alias("premium_service_indicator")
+            pl.col("totalPrice").rank(method="dense").over("ranker_id")
+             .alias("price_rank_in_session"),
+
+            (pl.col("totalPrice") - pl.col("median_price")).abs()
+             .alias("price_vs_median_gap"),
+
+            (pl.col("totalPrice") <= (pl.col("min_price") * 1.10))
+             .alias("is_cheapest_or_near"),
+
+            (((pl.col("totalPrice") - pl.col("mean_price")) / pl.col("std_price")))
+             .fill_nan(0).fill_null(0).alias("price_z_score")
         ])
         
-        return interaction_features
+        return df.drop(["min_price", "median_price", "mean_price", "std_price"])
+
+    def create_policy_compliance_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create features that capture compliance with corporate travel policy."""
+        logger.info("Creating corporate policy compliance features...")
+
+        # Use a fallback for policy_compliant if it's missing
+        policy_col = "pricingInfo_isAccessTP"
+        if policy_col not in df.columns:
+            df = df.with_columns(pl.lit(False).alias(policy_col))
+        
+        # Use a fallback for cabin_class if it's missing
+        cabin_col = "legs0_segments0_cabinClass"
+        if cabin_col not in df.columns:
+            df = df.with_columns(pl.lit("Unknown").alias(cabin_col))
+
+        df = df.with_columns([
+            pl.col(policy_col).fill_null(False).cast(pl.Int8).alias("policy_compliant_flag"),
+            pl.when(
+                (pl.col(cabin_col).fill_null("Unknown").is_in(["Economy", "PremiumEconomy"])) |
+                (pl.col(policy_col).fill_null(False) == True)
+            ).then(1).otherwise(0).cast(pl.Int8).alias("cabin_allowed")
+        ])
+        
+        return df
+
+    def create_fare_flexibility_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create features that quantify fare flexibility."""
+        logger.info("Creating fare flexibility features...")
+
+        # Define source columns and ensure they exist with safe defaults
+        cancellation_fee_col = "miniRules0_monetaryAmount"
+        exchange_fee_col = "miniRules1_monetaryAmount"
+        baggage_col = "legs0_segments0_baggageAllowance_quantity"
+
+        if cancellation_fee_col not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(cancellation_fee_col))
+        if exchange_fee_col not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(exchange_fee_col))
+        if baggage_col not in df.columns:
+            df = df.with_columns(pl.lit(0, dtype=pl.Int8).alias(baggage_col))
+
+        return df.with_columns([
+            pl.when(pl.col(cancellation_fee_col).is_null())
+              .then(pl.lit("NonRefundable"))
+              .when(pl.col(cancellation_fee_col) > 0)
+              .then(pl.lit("Fee"))
+              .otherwise(pl.lit("Free"))
+              .alias("cancellation_policy_tier"),
+
+            pl.when(pl.col(exchange_fee_col).is_null())
+              .then(pl.lit("NoChange"))
+              .when(pl.col(exchange_fee_col) > 0)
+              .then(pl.lit("FeeChange"))
+              .otherwise(pl.lit("FreeChange"))
+              .alias("change_policy_category"),
+
+            (pl.col(baggage_col).fill_null(0) > 0).cast(pl.Int8).alias("free_baggage")
+        ])
+
+    def create_temporal_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create temporal features for business travel preferences."""
+        logger.info("Creating temporal features...")
+        
+        dep_time_col = "legs0_departureAt"
+        if dep_time_col not in df.columns:
+            logger.warning(f"'{dep_time_col}' not found. Skipping temporal features.")
+            return df
+
+        # Assuming departure time is in local time as per competition docs.
+        df = df.with_columns(
+            pl.col(dep_time_col).str.to_datetime(cache=False).alias("departure_time")
+        )
+
+        df = df.with_columns([
+            pl.col("departure_time").dt.hour().alias("dep_hour"),
+            pl.col("departure_time").dt.weekday().alias("dep_weekday") # Monday=1, Sunday=7
+        ])
+
+        df = df.with_columns([
+            ((pl.col("dep_hour") >= 6) & (pl.col("dep_hour") < 22)).cast(pl.Int8).alias("is_business_hours"),
+            ((pl.col("dep_hour") >= 22) | (pl.col("dep_hour") < 6)).cast(pl.Int8).alias("is_redeye_flight"),
+            (pl.col("dep_weekday").is_in([6, 7])).cast(pl.Int8).alias("is_weekend_flight"),
+            (pl.col("dep_hour") // 6).alias("departure_hour_bin"),
+            (pl.sin(2 * np.pi * pl.col("dep_hour") / 24)).alias("dep_hour_sin"),
+            (pl.cos(2 * np.pi * pl.col("dep_hour") / 24)).alias("dep_hour_cos")
+        ])
+        
+        return df.drop("departure_time")
+
+    def create_booking_context_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Create booking urgency and lead time features."""
+        logger.info("Creating booking context features...")
+
+        req_date_col = "requestDate"
+        req_dep_date_col = "requestDepartureDate"
+
+        if req_date_col not in df.columns or req_dep_date_col not in df.columns:
+            logger.warning("Request date columns not found. Skipping booking context features.")
+            return df
+        
+        df = df.with_columns([
+            pl.col(req_date_col).str.to_datetime(cache=False).cast(pl.Date).alias("request_date_parsed"),
+            pl.col(req_dep_date_col).str.to_datetime(cache=False).cast(pl.Date).alias("departure_date_parsed")
+        ])
+
+        df = df.with_columns([
+            (pl.col("departure_date_parsed") - pl.col("request_date_parsed")).dt.days().alias("booking_lead_days")
+        ])
+
+        df = df.with_columns([
+            pl.when(pl.col("booking_lead_days") <= 3).then(pl.lit("last_minute"))
+             .when(pl.col("booking_lead_days") <= 14).then(pl.lit("short_term"))
+             .otherwise(pl.lit("planned"))
+             .alias("booking_urgency_category")
+        ])
+        
+        return df.drop(["request_date_parsed", "departure_date_parsed"])
+    
+    def create_route_quality_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Creates features based on the route's quality, like connections."""
+        logger.info("Creating route quality features...")
+
+        segments_count_col = "segments_count"
+        if segments_count_col not in df.columns:
+            # Fallback: assume direct flight if segment count is missing
+            df = df.with_columns(pl.lit(1, dtype=pl.Int32).alias(segments_count_col))
+        
+        return df.with_columns([
+            (pl.col(segments_count_col).fill_null(1) - 1).alias("connection_count"),
+            (pl.col(segments_count_col).fill_null(1) == 1).cast(pl.Int8).alias("is_direct_flight")
+        ])
+
+    def create_duration_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """Creates duration-based features like ranking and ratios."""
+        logger.info("Creating duration features...")
+
+        duration_col = "total_duration_minutes"
+        if duration_col not in df.columns:
+            # Attempt to create it from legs0_duration if available
+            if "legs0_duration" in df.columns:
+                df = df.with_columns(
+                    (pl.col("legs0_duration").str.extract(r"(\d+):(\d+):(\d+)", 1).cast(pl.Int32) * 60 +
+                     pl.col("legs0_duration").str.extract(r"(\d+):(\d+):(\d+)", 2).cast(pl.Int32))
+                    .alias(duration_col)
+                )
+            else:
+                logger.warning(f"'{duration_col}' not found. Skipping duration features.")
+                return df
+
+        session_min_dur = df.group_by("ranker_id").agg(
+            pl.min(duration_col).alias("min_dur")
+        )
+
+        df = df.join(session_min_dur, on="ranker_id", how="left")
+
+        df = df.with_columns([
+            (pl.col(duration_col) / pl.col("min_dur"))
+             .fill_nan(1.0).fill_null(1.0).alias("duration_vs_min"),
+            pl.col(duration_col).rank(method="dense").over("ranker_id").alias("duration_rank")
+        ])
+        
+        return df.drop("min_dur")
     
     def engineer_all_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """Apply all feature engineering steps"""
-        logger.info("Starting comprehensive feature engineering...")
-        
-        # Apply all feature engineering steps
-        df = self.create_price_features(df)
-        df = self.create_time_features(df)
-        df = self.create_advanced_time_features(df)
-        # Route-related base features first (creates marketing_carrier etc.)
-        df = self.create_route_features(df)
-        df = self.create_policy_features(df)
-        df = self.create_carrier_features(df)
-        df = self.create_route_complexity_features(df)
-        df = self.create_json_interaction_features(df)
-        df = self.create_group_features(df)
-        df = self.create_interaction_features(df)
-        
-        # Drop raw request date columns if they remain to avoid dtype issues
-        for col_to_drop in ["requestDate", "requestDepartureDate", "requestReturnDate"]:
-            if col_to_drop in df.columns:
-                df = df.drop(col_to_drop)
+        """
+        Apply all feature engineering steps from the Week 1 roadmap in a logical,
+        robust, and sequential manner.
+        """
+        logger.info("Starting Week 1 advanced feature engineering pipeline...")
 
-        logger.info("Feature engineering complete!")
+        # The order is intentional to build features upon each other if needed.
+        df = self.create_price_intelligence_features(df)
+        df = self.create_policy_compliance_features(df)
+        df = self.create_fare_flexibility_features(df)
+        df = self.create_temporal_features(df)
+        df = self.create_booking_context_features(df)
+        df = self.create_route_quality_features(df)
+        df = self.create_duration_features(df)
+
+        logger.info("Advanced feature engineering complete!")
         return df
     
     def get_feature_importance_categories(self) -> Dict[str, List[str]]:
         """Get categorized feature lists for analysis"""
+        # This can be updated to reflect the new feature names
         return {
             "price_features": [
-                "total_price", "tax_amount", "base_price", "tax_rate",
-                "price_rank", "price_diff_from_mean", "price_percentile", "price_bin"
+                "rel_price_vs_min", "price_rank_in_session", "price_vs_median_gap",
+                "is_cheapest_or_near", "price_z_score"
             ],
-            "time_features": [
-                "total_duration_minutes", "departure_hour", "arrival_hour",
-                "departure_weekday", "departure_time_category", "duration_rank", "duration_percentile"
+            "policy_features": [
+                "policy_compliant_flag", "cabin_allowed"
+            ],
+            "flexibility_features": [
+                "cancellation_policy_tier", "change_policy_category", "free_baggage"
+            ],
+            "temporal_features": [
+                "is_business_hours", "is_redeye_flight", "is_weekend_flight",
+                "departure_hour_bin", "dep_hour_sin", "dep_hour_cos"
+            ],
+            "context_features": [
+                "booking_lead_days", "booking_urgency_category"
+            ],
+            "route_features": [
+                "connection_count", "is_direct_flight"
+            ],
+            "duration_features": [
+                "duration_vs_min", "duration_rank"
             ],
             "route_features": [
                 "is_roundtrip", "origin_airport", "destination_airport",

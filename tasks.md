@@ -79,3 +79,42 @@ This phase focuses on advanced feature engineering and optimizing the `LGBMRanke
 - **Task 5: Final Predictions and Ensembling.**
   - **Goal:** Generate final predictions using an ensemble of the 5-fold models and the single model trained on the full dataset, preparing the results for submission.
   - **Status:** ✅ Completed
+
+## Phase 4: Advanced Feature Engineering Roadmap (Week 1)
+
+This phase focuses on implementing a comprehensive set of advanced features to significantly boost model performance.
+
+### Day 1: Pricing Intelligence Features
+- [x] **Task:** Implement within-session price competitiveness metrics.
+  - **Features:** `rel_price_vs_min`, `price_rank_in_session`, `price_vs_median_gap`, `is_cheapest_or_near`, `price_z_score`.
+  - **Goal:** Quantify the "deal appeal" of each flight option to improve ranking based on cost-effectiveness.
+
+### Day 2: Corporate Policy Compliance Features
+- [x] **Task:** Implement features capturing adherence to corporate travel policies.
+  - **Features:** `policy_compliant_flag`, `cabin_allowed`, `preferred_airline_match`, `expense_approval_required`.
+  - **Goal:** Align model predictions with the critical business constraint of policy compliance.
+
+### Day 3: Fare Flexibility Analysis Features
+- [x] **Task:** Engineer features to quantify the flexibility of a fare (cancellation, changes).
+  - **Features:** `cancellation_policy_tier`, `change_policy_category`, `free_baggage`.
+  - **Goal:** Capture the value business travelers place on flexible tickets.
+
+### Day 4: Temporal Preferences – Business Hours Modeling
+- [x] **Task:** Implement features to model preferences for business-friendly travel times.
+  - **Features:** `departure_hour_bin`, `is_business_hours`, `is_redeye_flight`, `is_weekend_flight`, cyclical hour encodings.
+  - **Goal:** Align model with known preferences for flights during reasonable hours and days.
+
+### Day 5: Booking Urgency & Lead Time Features
+- [x] **Task:** Implement features based on the booking lead time.
+  - **Features:** `booking_lead_days`, `booking_urgency_category`.
+  - **Goal:** Provide the model with context about the booking window, which influences decision-making.
+
+### Day 6: Route and Connection Quality Features
+- [x] **Task:** Engineer features to evaluate itinerary quality, focusing on connections.
+  - **Features:** `is_direct_flight`, `connection_count`, `shortest_layover_minutes`, `longest_layover_minutes`, `has_overnight_connection`.
+  - **Goal:** Capture the strong preference for non-stop and efficient routes.
+
+### Day 7: Flight Duration and Final Integration
+- [x] **Task:** Implement features for total travel duration and integrate all new features.
+  - **Features:** `total_duration_minutes`, `duration_vs_min`, `duration_rank`.
+  - **Goal:** Finalize the feature set, perform integration tests, and ensure the entire pipeline is robust and free of data leakage.
