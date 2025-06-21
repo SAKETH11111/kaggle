@@ -4,6 +4,7 @@ import numpy as np
 import logging
 from pathlib import Path
 import json
+import lightgbm as lgb
 from optuna.integration import LightGBMPruningCallback
 
 from data_pipeline import DataPipeline, DataConfig
@@ -41,9 +42,9 @@ def objective(trial: optuna.trial.Trial) -> float:
         'min_child_samples': trial.suggest_int('min_child_samples', 20, 100), # Increased lower bound
         'subsample': trial.suggest_float('subsample', 0.6, 1.0),
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-        'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 5.0, log=True),
-        'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 5.0, log=True),
-        'min_gain_to_split': trial.suggest_float('min_gain_to_split', 0, 15), # Added this parameter
+        'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 1.0, log=True),
+        'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 1.0, log=True),
+        'min_gain_to_split': trial.suggest_float('min_gain_to_split', 0.0, 0.3),
     }
 
     # --- 2. Data Preparation ---
@@ -87,7 +88,9 @@ def objective(trial: optuna.trial.Trial) -> float:
         # --- 4. Model Training ---
         trainer = RankerTrainer(model_params=params)
         pruning_callback = LightGBMPruningCallback(trial, "ndcg@3")
-        trainer.train(X_train, y_train, group_train, X_val, y_val, group_val, callbacks=[pruning_callback])
+        early_stopping_cb = lgb.early_stopping(stopping_rounds=100, verbose=False)
+        callbacks = [pruning_callback, early_stopping_cb]
+        trainer.train(X_train, y_train, group_train, X_val, y_val, group_val, callbacks=callbacks)
         
         # The evaluation metric (NDCG@3) is automatically calculated by LightGBM's fit method.
         # We retrieve the best score from the validation set.
