@@ -1,6 +1,0 @@
-polars==0.20
-pyarrow==16
-orjson
-ijson
-multiprocess
-tqdm

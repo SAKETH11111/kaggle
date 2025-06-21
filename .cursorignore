@@ -1,3 +1,4 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
 # Data and processed files
 /data/
 /processed/
@@ -16,4 +17,3 @@ __pycache__/
 
 # Dataset folder - ignore completely
 /dataset_full/
-/teamspace/studios/this_studio/kaggle/dataset_full/
