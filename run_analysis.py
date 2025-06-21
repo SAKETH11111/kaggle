@@ -12,7 +12,7 @@ from data_pipeline import DataPipeline, DataConfig
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-MODEL_PATH = "processed/models/lgbm_ranker_full_optuna.txt"
+MODEL_PATH = "processed/models/lgbm_ranker_fold_1.txt"
 N_SHAP_SAMPLES = 10000  # Number of samples to use for SHAP analysis
 
 # --- Main Execution Block ---
@@ -24,7 +24,11 @@ def main():
 
     # --- 1. Load Model and Data ---
     logger.info(f"Loading model from {MODEL_PATH}...")
-    booster = lgb.Booster(model_file=MODEL_PATH)
+    try:
+        booster = lgb.Booster(model_file=MODEL_PATH)
+    except lgb.basic.LightGBMError:
+        logger.error(f"Could not find model file at {MODEL_PATH}. Please run run_training.py to generate the final model.")
+        return
     
     logger.info("Loading data for analysis...")
     config = DataConfig()

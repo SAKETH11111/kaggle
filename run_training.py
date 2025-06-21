@@ -163,15 +163,11 @@ def main():
 
     # Determine the optimal number of boosting rounds from the CV
     # We'll use the average best iteration from the folds, rounded up
-    if oof_models and all(hasattr(m, 'model') and hasattr(m.model, 'best_iteration_') and m.model.best_iteration_ is not None for m in oof_models):
-        avg_best_iteration = int(np.mean([m.model.best_iteration_ for m in oof_models]))
-        MODEL_PARAMS['n_estimators'] = avg_best_iteration
-        logger.info(f"Setting n_estimators for final model to average best iteration: {avg_best_iteration}")
-    else:
-        logger.warning("Could not determine average best iteration from CV. Using default n_estimators.")
-
+    # For the final model, we use the n_estimators value from our optimized parameters,
+    # as there is no validation set for early stopping.
+    logger.info(f"Using n_estimators={MODEL_PARAMS.get('n_estimators', 1000)} for final model.")
+    
     final_trainer = RankerTrainer(model_params=MODEL_PARAMS)
-    # We train without a validation set here, using the optimized number of estimators
     final_trainer.model.fit(X_full, y_full, group=group_full)
     
     logger.info("Final model training complete.")
