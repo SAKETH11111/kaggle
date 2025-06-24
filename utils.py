@@ -185,15 +185,20 @@ class FeatureUtils:
             return df.with_columns(encoded_col)
         
         elif method == "frequency":
-            # Frequency encoding
-            freq_map = (
-                df.group_by(col)
-                .len()
-                .collect()
-                .to_dict(as_series=False)
-            )
-            freq_dict = dict(zip(freq_map[col], freq_map["len"]))
-            
+            # Frequency encoding compatible with LazyFrame/DataFrame
+            if isinstance(df, pl.LazyFrame):
+                freq_df = (
+                    df.group_by(col)
+                      .agg(pl.count().alias("freq"))
+                      .collect()
+                )
+            else:
+                freq_df = (
+                    df.groupby(col, maintain_order=False)
+                      .agg(pl.count().alias("freq"))
+                )
+
+            freq_dict = dict(zip(freq_df[col].to_list(), freq_df["freq"].to_list()))
             encoded_col = pl.col(col).replace(freq_dict).alias(f"{col}_freq")
             return df.with_columns(encoded_col)
         
@@ -218,11 +223,37 @@ class FeatureUtils:
         ranking_features = [
             pl.col(value_col).rank().over(group_col).alias(f"{value_col}_rank"),
             pl.col(value_col).rank(method="dense").over(group_col).alias(f"{value_col}_dense_rank"),
-            ((pl.col(value_col).rank().over(group_col) - 1) / 
+            ((pl.col(value_col).rank().over(group_col) - 1) /
              (pl.col(value_col).count().over(group_col) - 1)).alias(f"{value_col}_percentile")
         ]
         
         return df.with_columns(ranking_features)
+
+    @staticmethod
+    def label_encode_categorical(df: pl.LazyFrame, cat_cols: List[str]) -> pl.LazyFrame:
+        """
+        Label encodes categorical columns using Polars' categorical type.
+        This is a memory-efficient and lazy-friendly approach.
+        """
+        for col in cat_cols:
+            if col in df.columns:
+                df = df.with_columns(
+                    pl.col(col).cast(pl.Categorical).to_physical().cast(pl.Int16).alias(f"{col}_le")
+                )
+        return df
+
+    @staticmethod
+    def guard_against_infinities(df: pl.LazyFrame, cols: List[str]) -> pl.LazyFrame:
+        """Replaces NaN and infinity values with 0."""
+        for col_name in cols:
+            if col_name in df.columns:
+                df = df.with_columns(
+                    pl.when(pl.col(col_name).is_nan() | pl.col(col_name).is_infinite())
+                      .then(0)
+                      .otherwise(pl.col(col_name))
+                      .alias(col_name)
+                )
+        return df
 
 class IOUtils:
     """Input/Output utilities"""
@@ -353,6 +384,119 @@ class CrossValidationUtils:
         val_df = sorted_df.slice(split_point, n_rows - split_point)
         
         return train_df, val_df
+
+class TargetEncodingUtils:
+    """Target encoding utilities with CV-safe implementation"""
+    
+    @staticmethod
+    def kfold_target_encode(df: pl.DataFrame, 
+                           cat_cols: List[str], 
+                           target: str, 
+                           folds: List[Tuple[np.ndarray, np.ndarray]], 
+                           noise: float = 0.01) -> pl.DataFrame:
+        """
+        K-fold target encoding to prevent overfitting.
+        
+        Args:
+            df: Input DataFrame
+            cat_cols: List of categorical columns to encode
+            target: Target column name
+            folds: List of (train_idx, val_idx) tuples from CV split
+            noise: Small amount of noise to add for regularization
+            
+        Returns:
+            DataFrame with new target-encoded columns (suffix '_te')
+        """
+        np.random.seed(42)  # For reproducible noise
+        df_encoded = df.clone()
+        
+        # Get global mean for fallback
+        global_mean = df[target].mean()
+        
+        # Initialize target encoding columns
+        for col in cat_cols:
+            if col in df.columns:
+                df_encoded = df_encoded.with_columns(
+                    pl.lit(global_mean).alias(f"{col}_te")
+                )
+        
+        # Apply encoding fold by fold
+        for fold_idx, (train_idx, val_idx) in enumerate(folds):
+            train_df = df[train_idx]
+            
+            for col in cat_cols:
+                if col in df.columns:
+                    # Calculate mean target by category in training set
+                    category_means = (
+                        train_df.group_by(col)
+                        .agg(pl.mean(target).alias("mean_target"))
+                    )
+                    
+                    # Apply encoding to validation set
+                    val_df = df[val_idx].join(
+                        category_means, 
+                        on=col, 
+                        how="left"
+                    ).with_columns(
+                        pl.col("mean_target").fill_null(global_mean).alias("encoded_val")
+                    )
+                    
+                    # Add noise for regularization
+                    if noise > 0:
+                        noise_vals = np.random.normal(0, noise, len(val_idx))
+                        encoded_vals = val_df["encoded_val"].to_numpy() * (1 + noise_vals)
+                    else:
+                        encoded_vals = val_df["encoded_val"].to_numpy()
+                    
+                    # Update the main dataframe
+                    df_encoded[val_idx, f"{col}_te"] = encoded_vals
+        
+        return df_encoded
+    
+    @staticmethod
+    def simple_target_encode(df: pl.DataFrame, 
+                           cat_cols: List[str], 
+                           target: str,
+                           smoothing: float = 10.0) -> pl.DataFrame:
+        """
+        Simple target encoding with smoothing (for when folds not available).
+        
+        Args:
+            df: Input DataFrame
+            cat_cols: List of categorical columns to encode
+            target: Target column name
+            smoothing: Smoothing parameter (higher = more regularization)
+            
+        Returns:
+            DataFrame with new target-encoded columns (suffix '_te')
+        """
+        df_encoded = df.clone()
+        global_mean = df[target].mean()
+        
+        for col in cat_cols:
+            if col in df.columns:
+                # Calculate category statistics
+                cat_stats = (
+                    df.group_by(col)
+                    .agg([
+                        pl.mean(target).alias("cat_mean"),
+                        pl.count().alias("cat_count")
+                    ])
+                    .with_columns(
+                        # Smoothed target encoding formula
+                        ((pl.col("cat_mean") * pl.col("cat_count") + global_mean * smoothing) /
+                         (pl.col("cat_count") + smoothing)).alias(f"{col}_te")
+                    )
+                    .select([col, f"{col}_te"])
+                )
+                
+                # Join back to main dataframe
+                df_encoded = df_encoded.join(cat_stats, on=col, how="left")
+                df_encoded = df_encoded.with_columns(
+                    pl.col(f"{col}_te").fill_null(global_mean)
+                )
+        
+        return df_encoded
 
 class PerformanceUtils:
     """Performance monitoring utilities"""

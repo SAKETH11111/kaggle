@@ -12,7 +12,7 @@ from data_pipeline import DataPipeline, DataConfig
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-MODEL_PATH = "processed/models/lgbm_ranker_fold_1.txt"
+MODEL_PATH = "processed/models/be_lgbm_ranker_week1_fold_2.txt"
 N_SHAP_SAMPLES = 10000  # Number of samples to use for SHAP analysis
 
 # --- Main Execution Block ---

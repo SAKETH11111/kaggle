@@ -6,8 +6,10 @@ import argparse
 import json
 
 from data_pipeline import DataPipeline, DataConfig
+from feature_engineering import FeatureEngineer
 from ranker_trainer import RankerTrainer
-from utils import CrossValidationUtils, ValidationUtils
+from utils import CrossValidationUtils, ValidationUtils, TargetEncodingUtils
+import lightgbm as lgb
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,178 +20,180 @@ def main():
     Main function to run the end-to-end training pipeline.
     """
     parser = argparse.ArgumentParser(description="Run the training pipeline.")
-    parser.add_argument(
-        "--start-fold",
-        type=int,
-        default=1,
-        help="The fold number to start training from (1-based).",
-    )
+    parser.add_argument("--fold", type=int, default=0, help="Run a single fold (1-based). 0 to run all.")
+    parser.add_argument("--features", type=str, default="week1", choices=["baseline", "week1"], help="Feature set to use.")
+    parser.add_argument("--sample-frac", type=float, default=None, help="Fraction of data to use for a quick run.")
     args = parser.parse_args()
 
-    logger.info("Starting end-to-end training pipeline...")
+    logger.info(f"Starting training pipeline with feature set: {args.features}")
 
     # --- 1. Configuration ---
     config = DataConfig()
     N_SPLITS = 5
     RANDOM_SEED = 42
     
-    # Load the best hyperparameters from the Optuna study
     best_params_path = Path("processed/optuna_best_params.json")
     if not best_params_path.exists():
-        raise FileNotFoundError(f"Best parameters file not found at {best_params_path}. Please run run_tuning.py first.")
+        raise FileNotFoundError(f"Best parameters file not found at {best_params_path}. Run tuning first.")
     
     with open(best_params_path, 'r') as f:
         MODEL_PARAMS = json.load(f)
     
-    # Ensure essential parameters are set for GPU training
-    MODEL_PARAMS['objective'] = 'lambdarank'
-    MODEL_PARAMS['metric'] = 'ndcg'
-    MODEL_PARAMS['random_state'] = RANDOM_SEED
-    MODEL_PARAMS['n_estimators'] = 1000  # Keep n_estimators high, rely on early stopping
-    MODEL_PARAMS['device'] = 'cuda'
-    MODEL_PARAMS['n_jobs'] = -1
-
-    logger.info("Loaded best hyperparameters from Optuna study:")
-    for key, value in MODEL_PARAMS.items():
-        logger.info(f"  {key}: {value}")
+    MODEL_PARAMS.update({
+        'objective': 'lambdarank',
+        'metric': 'ndcg',
+        'random_state': RANDOM_SEED,
+        'n_estimators': 3000,
+        'learning_rate': 0.05,
+        'feature_fraction': 0.9,
+        'bagging_fraction': 0.8,
+        'bagging_freq': 1,
+        'lambda_l1': 0.05,
+        'lambda_l2': 0.05,
+        'num_leaves': 1024,
+        'min_child_samples': 20,
+        'min_gain_to_split': 0.0,
+        'verbose': -1,
+        'n_jobs': -1,
+        'seed': RANDOM_SEED,
+        'boosting_type': 'gbdt',
+    })
+    logger.info(f"Using model parameters: {MODEL_PARAMS}")
 
     # --- 2. Data Preparation ---
     logger.info("Preparing training data...")
     pipeline = DataPipeline(config)
-    full_df_lazy = pipeline.prepare_training_data()
     
-    # Collect the full dataframe into memory for CV splitting
+    # New feature engineering pipeline for Week 1
+    full_df_lazy = pipeline.loader.load_structured_data("train")
+    
+    if args.sample_frac:
+        logger.info(f"Sampling data to {args.sample_frac} fraction.")
+        unique_ranker_ids = full_df_lazy.select("ranker_id").unique()
+        sampled_ranker_ids = unique_ranker_ids.sample(fraction=args.sample_frac, seed=RANDOM_SEED)
+        full_df_lazy = full_df_lazy.join(sampled_ranker_ids.lazy(), on="ranker_id")
+
+    if args.features == "baseline":
+        # Legacy data prep for baseline
+        # Note: This path might need updates if baseline features are different
+        feature_engineer = None # Or a baseline-specific feature engineer
+        full_df_lazy = pipeline.prepare_training_data() # This might need adjustment
+    else:
+        feature_engineer = FeatureEngineer()
+        full_df_lazy = feature_engineer.engineer_features(full_df_lazy)
+
     full_df = full_df_lazy.collect()
     logger.info(f"Full training data shape: {full_df.shape}")
 
-    # Define feature columns, excluding identifiers and raw categorical strings
-    feature_cols = [
-        col for col in full_df.columns 
-        if col not in [
-            'Id', 'ranker_id', 'selected', 'profileId', 'search_route', 
-            'price_bin', 'departure_time_category', 'cabin_class_name', 
-            'origin_airport', 'destination_airport', 'marketing_carrier', 
-            'operating_carrier', 'aircraft_code'
-        ]
-    ]
-    logger.info(f"Using {len(feature_cols)} features for training.")
+    # Filter to groups >10 items to align with evaluation metric
+    group_sizes = full_df.group_by('ranker_id').agg(pl.count().alias('group_size'))
+    full_df = full_df.join(group_sizes, on='ranker_id', how='inner')
+    full_df = full_df.filter(pl.col('group_size') > 10).drop('group_size')
 
-    # --- 3. Cross-Validation Setup ---
-    logger.info(f"Setting up {N_SPLITS}-fold StratifiedGroupKFold cross-validation...")
+    # --- 3. Cross-Validation Setup (before feature selection to enable target encoding) ---
     cv_splits = CrossValidationUtils.stratified_group_kfold_split(
-        df=full_df,
-        group_col='profileId',
-        stratify_col='selected',
-        n_splits=N_SPLITS,
-        seed=RANDOM_SEED
+        df=full_df, group_col='profileId', stratify_col='selected', n_splits=N_SPLITS, seed=RANDOM_SEED
     )
 
-    oof_preds = []
-    fold_scores = []
-    oof_models = []
+    # --- 4. Target Encoding for high-cardinality features ---
+    target_encode_cols = []
+    for col in ['searchRoute', 'legs0_segments0_operatingCarrier_code', 'companyID']:
+        if col in full_df.columns:
+            target_encode_cols.append(col)
+    
+    if target_encode_cols and args.features == "week1":
+        logger.info(f"Applying target encoding to: {target_encode_cols}")
+        full_df = TargetEncodingUtils.kfold_target_encode(
+            df=full_df, 
+            cat_cols=target_encode_cols, 
+            target='selected', 
+            folds=cv_splits, 
+            noise=0.01
+        )
+        # Remove frequency-encoded searchRoute if it exists (superseded by target encoding)
+        if 'searchRoute_freq' in full_df.columns:
+            full_df = full_df.drop('searchRoute_freq')
+        logger.info("Target encoding complete")
 
-    # --- 4. Training Loop ---
-    for fold, (train_idx, val_idx) in enumerate(cv_splits):
-        # The training loop is 0-indexed, but user input is 1-indexed.
-        current_fold_num = fold + 1
-        if current_fold_num < args.start_fold:
-            logger.info(f"--- Skipping Fold {current_fold_num}/{N_SPLITS} ---")
-            continue
+    # --- 5. Feature Selection ---
+    if feature_engineer:
+        feature_cols = feature_engineer.get_feature_names(full_df)
+    else: # Baseline features
+        feature_cols = [col for col in full_df.columns if col not in ['Id', 'ranker_id', 'selected', 'profileId', 'companyID', 'searchRoute']]
+    
+    # Add target-encoded features to feature list (avoiding duplicates)
+    te_feature_cols = [f"{col}_te" for col in target_encode_cols if f"{col}_te" in full_df.columns]
+    for te_col in te_feature_cols:
+        if te_col not in feature_cols:
+            feature_cols.append(te_col)
+    
+    # Remove duplicates while preserving order
+    feature_cols = list(dict.fromkeys(feature_cols))
+    
+    categorical_cols = [col for col in feature_cols if full_df[col].dtype in [pl.Categorical, pl.Utf8] or col.endswith("_le")]
+    
+    logger.info(f"Using {len(feature_cols)} features (including {len(te_feature_cols)} target-encoded). Categorical features: {categorical_cols}")
 
-        logger.info(f"--- Starting Fold {current_fold_num}/{N_SPLITS} ---")
+    oof_preds, fold_scores = [], []
+    folds_to_run = [args.fold - 1] if args.fold > 0 else range(N_SPLITS)
 
-        # Split data and sort by ranker_id for contiguous groups
+    # --- 6. Training Loop ---
+    for fold in folds_to_run:
+        train_idx, val_idx = cv_splits[fold]
+        logger.info(f"--- Starting Fold {fold + 1}/{N_SPLITS} ---")
+
         train_fold_df = full_df[train_idx].sort('ranker_id')
         val_fold_df = full_df[val_idx].sort('ranker_id')
 
-        X_train = train_fold_df[feature_cols].to_pandas()
-        y_train = train_fold_df['selected'].to_pandas()
-        # Calculate group sizes for LightGBM (rows per ranker_id in original order)
-        group_train = (
-            train_fold_df
-            .group_by('ranker_id', maintain_order=True)
-            .agg(pl.count())
-            .get_column('count')
-            .to_numpy()
-        )
+        X_train = train_fold_df.select(feature_cols).to_pandas()
+        y_train = train_fold_df['selected'].to_numpy()
+        group_train = train_fold_df.group_by('ranker_id', maintain_order=True).count().get_column('count').to_numpy()
 
-        X_val = val_fold_df[feature_cols].to_pandas()
-        y_val = val_fold_df['selected'].to_pandas()
-        group_val = (
-            val_fold_df
-            .group_by('ranker_id', maintain_order=True)
-            .agg(pl.count())
-            .get_column('count')
-            .to_numpy()
-        )
+        X_val = val_fold_df.select(feature_cols).to_pandas()
+        y_val = val_fold_df['selected'].to_numpy()
+        group_val = val_fold_df.group_by('ranker_id', maintain_order=True).count().get_column('count').to_numpy()
         
         logger.info(f"Train shape: {X_train.shape}, Val shape: {X_val.shape}")
 
-        # Initialize and train the model
         trainer = RankerTrainer(model_params=MODEL_PARAMS)
-        trainer.train(X_train, y_train, group_train, X_val, y_val, group_val)
-
-        # Generate predictions on the validation set
-        val_preds = trainer.predict(X_val)
+        callbacks = [lgb.early_stopping(100, verbose=False)]
         
-        val_results_df = val_fold_df.select(['ranker_id', 'selected']).with_columns(
-            pl.Series("predicted_score", val_preds)
-        )
+        trainer.train(X_train, y_train, group_train, X_val, y_val, group_val, categorical_features=categorical_cols, callbacks=callbacks)
 
-        # Calculate and log HitRate@3
+        val_preds_scores = trainer.predict(X_val)
+        val_results_df = val_fold_df.select(['ranker_id', 'selected']).with_columns(pl.Series("predicted_score", val_preds_scores))
+
         hit_rate = ValidationUtils.calculate_hitrate_at_k(val_results_df, k=3)
         fold_scores.append(hit_rate)
-        logger.info(f"Fold {current_fold_num} HitRate@3: {hit_rate:.4f}")
+        logger.info(f"Fold {fold + 1} HitRate@3: {hit_rate:.5f}")
 
-        # Save the model for this fold
-        trainer.save_model(f"lgbm_ranker_fold_{current_fold_num}.txt")
-        
+        trainer.save_model(f"lgbm_ranker_{args.features}_fold_{fold + 1}.txt")
         oof_preds.append(val_results_df)
-        oof_models.append(trainer)
 
-    # --- 5. Final Evaluation ---
-    logger.info("--- Cross-Validation Complete ---")
+    # --- 7. Final Evaluation ---
+    if not folds_to_run:
+        logger.warning("No folds were run. Exiting.")
+        return
+
     avg_hit_rate = np.mean(fold_scores)
-    logger.info(f"Average HitRate@3 across {N_SPLITS} folds: {avg_hit_rate:.4f}")
+    logger.info(f"--- CV Complete ---")
+    logger.info(f"Average HitRate@3 across {len(folds_to_run)} folds: {avg_hit_rate:.5f}")
 
-    # --- 5. Final Model Training on Full Data ---
-    logger.info("--- Training Final Model on Full Dataset ---")
-    
-    # Prepare full dataset
-    full_train_df = full_df.sort('ranker_id')
-    X_full = full_train_df[feature_cols].to_pandas()
-    y_full = full_train_df['selected'].to_pandas()
-    group_full = full_train_df.group_by('ranker_id', maintain_order=True).len()['len'].to_numpy()
-
-    # Determine the optimal number of boosting rounds from the CV
-    # We'll use the average best iteration from the folds, rounded up
-    # For the final model, we use the n_estimators value from our optimized parameters,
-    # as there is no validation set for early stopping.
-    logger.info(f"Using n_estimators={MODEL_PARAMS.get('n_estimators', 1000)} for final model.")
-    
-    final_trainer = RankerTrainer(model_params=MODEL_PARAMS)
-    final_trainer.model.fit(X_full, y_full, group=group_full)
-    
-    logger.info("Final model training complete.")
-    final_trainer.save_model("lgbm_ranker_full_optuna.txt")
-
-    # Save out-of-fold predictions
     oof_df = pl.concat(oof_preds)
-    oof_df.write_parquet("processed/oof_predictions.parquet")
-    logger.info("Out-of-fold predictions saved to processed/oof_predictions.parquet")
+    oof_df.write_parquet(f"processed/oof_predictions_{args.features}.parquet")
+    logger.info(f"OOF predictions saved for feature set '{args.features}'.")
 
-    # --- 6. Save CV Results ---
+    # --- 8. Save CV Results ---
     cv_results = {
+        "feature_set": args.features,
         "avg_hitrate_at_3": avg_hit_rate,
         "fold_scores": fold_scores,
         "model_params": MODEL_PARAMS,
-        "n_splits": N_SPLITS,
-        "random_seed": RANDOM_SEED,
     }
-    cv_results_path = Path("processed/cv_results.json")
+    cv_results_path = Path(f"processed/cv_results_{args.features}.json")
     with open(cv_results_path, 'w') as f:
         json.dump(cv_results, f, indent=4)
-    logger.info(f"Cross-validation results saved to {cv_results_path}")
+    logger.info(f"CV results saved to {cv_results_path}")
 
 if __name__ == "__main__":
     main()
