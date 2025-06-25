@@ -1,212 +1,122 @@
-# FlightRank 2025 - Data Architecture & Processing Pipeline
+# Business Traveler Flight Selection Analysis
 
-## 🎯 Strategic Foundation Overview
+This repository contains a comprehensive analysis of a flight booking dataset to understand the key drivers of business travelers' choices. The project aims to uncover actionable insights that can be used to build a high-performing predictive model.
 
-This repository implements the **Phase 1: Strategic Foundation** for the FlightRank 2025 competition - building robust, memory-efficient data processing infrastructure that can handle 200+ features, multiple model types, and complex validation scenarios.
+## Project Structure
 
-**Core Philosophy**: Build once, iterate fast.
-
-## 📊 Dataset Overview
-
-### Data Scale & Structure
-- **Training Data**: 18.1M rows, 127 columns, 105,539 search sessions
-- **Test Data**: 126 columns (missing `selected` target)
-- **JSON Archive**: 150k files (~50GB) with rich feature opportunities
-- **Evaluation Target**: 89,646 groups with >10 options (84.9% of total)
-
-### Key Statistics
 ```
-📊 Dataset: 18,145,372 rows, 127 columns
-👥 Groups: 105,539 search sessions  
-🎯 Evaluation groups: 89,646 (84.9%)
-⚠️  Data quality: 77 columns with >50% missing
-📈 Group sizes: 1-8,236 options (median: 50)
-✅ Data validation: PASSED - All groups have exactly 1 selected flight
+.
+├── data/
+│   ├── train.parquet
+│   └── jsons_raw.tar.kaggle
+├── processed/
+│   ├── jsons_raw/
+│   │   └── raw/
+│   └── json_features.parquet
+├── docs/
+│   └── day1_2_report.md
+├── json_extractor/
+│   ├── json_extractor.py
+│   └── README.md
+├── final_analysis.py
+├── json_feature_extractor.py
+├── price_policy_analysis.py
+├── group_analysis.py
+├── requirements.txt
+└── README.md
 ```
 
-## 🏗️ Architecture Components
+### Key Directories
 
-### 1. Memory-Efficient Data Pipeline (`data_pipeline.py`)
+*   **`data/`**: Contains the raw, immutable input data.
+    *   `train.parquet`: The main dataset of flight search results.
+    *   `jsons_raw.tar.kaggle`: An archive containing detailed JSON data for each search.
+*   **`processed/`**: Contains all processed or intermediate data files.
+    *   `jsons_raw/`: The destination for the extracted JSON files.
+    *   `json_features.parquet`: A dataset of features extracted from the JSON files.
+*   **`docs/`**: Contains project documentation and reports.
+*   **`json_extractor/`**: A standalone module for parsing the raw JSON data.
 
-**Core Classes:**
-- `MemoryEfficientLoader`: Lazy loading with Polars for 8GB+ datasets
-- `DataQualityValidator`: Automated integrity checks and validation  
-- `JSONFeatureExtractor`: Parallel processing of 150k JSON files
-- `DataPipeline`: Main orchestrator with 8-core multiprocessing
+### Key Files
 
-**Key Features:**
-- Lazy evaluation prevents memory crashes
-- Streaming processing for large datasets  
-- Chunked processing with configurable batch sizes
-- Robust error handling for malformed data
+*   **`group_analysis.py`**: The initial exploratory data analysis script.
+*   **`price_policy_analysis.py`**: A script that performs a deep-dive into price and policy compliance.
+*   **`json_feature_extractor.py`**: A script to extract detailed features from the raw JSON data.
+*   **`final_analysis.py`**: The final, comprehensive analysis script that merges all data sources and generates the key insights.
+*   **`requirements.txt`**: A list of all Python dependencies required to run the project.
+*   **`README.md`**: This file, providing an overview of the project.
 
-### 2. Advanced Feature Engineering (`feature_engineering.py`)
+## Setup and Execution
 
-**Feature Categories:**
-- **Price Features**: Rankings, percentiles, group statistics
-- **Time Features**: Departure patterns, duration analysis
-- **Route Features**: Airlines, airports, connections
-- **Policy Features**: Corporate compliance, cancellation rules
-- **Group Features**: Within-session comparisons and rankings
-- **Interaction Features**: Complex business logic combinations
+### 1. Environment Setup
 
-### 3. Utility Framework (`utils.py`)
+It is recommended to use a virtual environment to manage dependencies.
 
-**Utility Classes:**
-- `ValidationUtils`: Submission format validation, HitRate@k calculation
-- `DataUtils`: Memory optimization, group-aware data splitting
-- `FeatureUtils`: Categorical encoding, ranking features
-- `CrossValidationUtils`: Group-based K-fold for ranking problems
-- `IOUtils`: Efficient data serialization and model artifacts
-
-### 4. Analysis & Testing (`run_analysis.py`)
-
-Comprehensive data analysis pipeline:
-- Schema validation and data quality assessment
-- Missing pattern analysis across 127 columns
-- Feature engineering testing and validation
-- JSON extraction testing with parallel processing
-- Automated report generation
-
-## 🚀 Quick Start
-
-### Setup Environment
 ```bash
-pip install polars pyarrow fastparquet
+# Create a virtual environment
+python3 -m venv venv
+
+# Activate the virtual environment
+source venv/bin/activate
+
+# Install the required dependencies
+pip install -r requirements.txt
 ```
 
-### Run Initial Analysis
+### 2. Data Preparation
+
+Before running the analysis, the raw JSON data must be extracted.
+
 ```bash
-python run_analysis.py
+# Create the destination directory
+mkdir -p processed/jsons_raw
+
+# Extract the JSON files
+tar -xf data/jsons_raw.tar.kaggle -C processed/jsons_raw/
 ```
 
-This will:
-1. Validate data integrity (✅ All 105,539 groups passed)
-2. Analyze missing patterns (77 columns with >50% missing)
-3. Test feature engineering pipeline
-4. Extract sample JSON features
-5. Generate detailed analysis report
+### 3. Running the Analyses
 
-### Key Files Generated
-- `processed/initial_analysis_report.json`: Comprehensive data analysis
-- `processed/jsons_raw/`: Extracted JSON archive (50GB)
-- `analysis.log`: Detailed processing logs
+The analyses are designed to be run in a specific order, as each script builds upon the previous one.
 
-## 📋 Critical Findings
+#### Step 1: Initial Group Analysis (Optional)
 
-### Data Quality Assessment
-- **✅ Perfect Data Integrity**: All 105,539 groups have exactly 1 selected flight
-- **⚠️ High Missing Rate**: 77/127 columns (60%) have >50% missing values
-- **🎯 Evaluation Impact**: 84.9% of groups qualify for scoring (>10 options)
+This script performs the initial exploratory data analysis.
 
-### Missing Data Patterns
-Top missing columns indicate optional flight segments and corporate features:
-- `frequentFlyer`: 75% missing
-- `corporateTariffCode`: 60% missing  
-- `legs0_segments1_*`: 57% missing (connecting flights)
-- `legs1_*`: High missing (return flights)
-
-### JSON Feature Opportunity
-- **Competitive Advantage**: 150k JSON files contain rich features most teams will skip
-- **Technical Challenge**: 50GB archive requires parallel processing
-- **Key Features Available**: Fare rules, policy compliance, real-time availability
-
-## 🔧 Advanced Features
-
-### Memory Management
-```python
-config = DataConfig(
-    memory_limit_gb=8.0,
-    use_lazy_loading=True,
-    chunk_size=10000
-)
-```
-
-### Parallel JSON Processing
-```python
-json_features = pipeline.json_extractor.extract_features_parallel(
-    max_files=1000,  # Process subset for testing
-    n_workers=8      # 8-core parallel processing
-)
-```
-
-### Group-Aware Validation
-```python
-train_df, val_df = DataUtils.split_by_groups(
-    df, group_col="ranker_id", 
-    train_ratio=0.8, 
-    seed=42
-)
-```
-
-## 🎯 Next Steps (Phase 2-3)
-
-### Immediate Priorities
-1. **JSON Feature Extraction**: Process full 150k archive for competitive advantage
-2. **Baseline Model**: Implement LightGBM ranking with cross-validation
-3. **Feature Selection**: Analyze importance on larger samples
-4. **Submission Pipeline**: Automated validation and format checking
-
-### Advanced Development
-1. **Multi-Model Ensemble**: Combine ranking models with different architectures  
-2. **Real-time Processing**: Optimize pipeline for inference speed
-3. **Feature Engineering**: Domain-specific business travel patterns
-4. **Hyperparameter Optimization**: Bayesian optimization with ranking metrics
-
-## 📖 API Reference
-
-### Core Pipeline Usage
-```python
-from data_pipeline import DataPipeline, DataConfig
-from feature_engineering import FeatureEngineer
-
-# Initialize pipeline
-config = DataConfig(n_workers=8, extract_json_features=True)
-pipeline = DataPipeline(config)
-
-# Load and process data
-train_lf = pipeline.loader.load_structured_data("train")
-engineer = FeatureEngineer()
-features_df = engineer.engineer_all_features(train_lf)
-
-# Validate and save
-results = pipeline.run_full_analysis()
-```
-
-### Submission Validation
-```python
-from utils import ValidationUtils
-
-validations = ValidationUtils.validate_submission_format(
-    submission_df, test_df
-)
-hitrate = ValidationUtils.calculate_hitrate_at_k(predictions, k=3)
-```
-
-## 📊 Performance Benchmarks
-
-- **Data Loading**: Lazy evaluation handles 18M+ rows efficiently
-- **Feature Engineering**: Processes 1000 samples in <1 second  
-- **JSON Extraction**: 8-core parallel processing of archive
-- **Memory Usage**: <8GB peak with optimized data types
-- **Validation**: Complete integrity check in ~2 seconds
-
-## 🔍 Monitoring & Debugging
-
-All operations include comprehensive logging:
 ```bash
-tail -f analysis.log  # Monitor real-time processing
+python3 group_analysis.py
 ```
 
-Performance profiling decorators available:
-```python
-@PerformanceUtils.time_execution
-@PerformanceUtils.profile_memory_usage
-def your_function():
-    pass
+#### Step 2: Price and Policy Deep-Dive (Optional)
+
+This script provides a more detailed look at pricing and policy compliance.
+
+```bash
+python3 price_policy_analysis.py
 ```
 
----
+#### Step 3: JSON Feature Extraction (Required)
 
-**Competition Goal**: HitRate@3 ≥ 0.7 for bonus prize (double payout)  
-**Architecture Status**: ✅ Phase 1 Complete - Ready for model development 
+This is a critical step that extracts detailed features from the raw JSON data. It is parallelized to run on all available CPU cores.
+
+```bash
+python3 json_feature_extractor.py
+```
+
+#### Step 4: Final Comprehensive Analysis (Required)
+
+This script merges all data sources and performs the final, in-depth analysis to generate the key insights that will inform the modeling phase.
+
+```bash
+python3 final_analysis.py
+```
+
+## Key Insights
+
+The comprehensive analysis has revealed several powerful, actionable insights that are critical for building a high-performing predictive model:
+
+*   **Positional Bias**: A flight's rank in the original search results is a massively predictive feature.
+*   **Flexibility is Non-Negotiable**: Business travelers almost exclusively select fares with zero cancellation fees.
+*   **Policy Compliance is Dominant**: Travelers are highly likely to choose a policy-compliant flight when one is available.
+*   **Price Sensitivity is Contextual**: Travelers are willing to pay a significant premium for convenience, especially for long-haul flights and if they are VIPs.
+*   **The "Ideal" Flight**: The data shows a clear preference for direct, policy-compliant, and fully refundable flights during standard business hours.

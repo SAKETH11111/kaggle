@@ -189,8 +189,9 @@ class FeatureEngineer:
         logger.info("Creating group features...")
         
         group_features = df.with_columns([
-            # Group size
+            # Group size & position
             pl.count().over("ranker_id").alias("group_size"),
+            pl.int_range(1, pl.count() + 1).over("ranker_id").alias("position"),
             
             # Position in group (by price, duration, etc.)
             pl.col("totalPrice").rank().over("ranker_id").alias("price_position_in_group"),
@@ -264,6 +265,7 @@ class FeatureEngineer:
 
         route_complexity_features = df.with_columns([
             pl.lit(num_segments).alias("num_segments"),
+            (pl.lit(num_segments) == 1).cast(pl.Int32).alias("is_direct"),
             layover_duration_expr
         ])
 

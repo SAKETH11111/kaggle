@@ -313,35 +313,6 @@ class CrossValidationUtils:
         return splits
 
     @staticmethod
-    def stratified_group_kfold_split(df: pl.DataFrame, group_col: str, stratify_col: str, n_splits: int = 5, seed: int = 42) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """
-        Create stratified group K-fold splits.
-
-        This method ensures that all records from a given group fall into the same split
-        while maintaining a balanced representation of the target variable in each fold.
-
-        Args:
-            df: The input DataFrame.
-            group_col: The column to group by (e.g., 'profileId').
-            stratify_col: The column to stratify by (e.g., 'selected').
-            n_splits: The number of folds.
-            seed: The random seed for reproducibility.
-
-        Returns:
-            A list of tuples, where each tuple contains the training and validation indices.
-        """
-        cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        
-        # Convert to numpy arrays for sklearn
-        X = df.select('Id').to_numpy()
-        y = df.select(stratify_col).to_numpy().ravel()
-        groups = df.select(group_col).to_numpy().ravel()
-
-        splits = list(cv.split(X, y, groups))
-        
-        return splits
-    
-    @staticmethod
     def temporal_split(df: pl.LazyFrame, date_col: str, train_ratio: float = 0.8) -> Tuple[pl.LazyFrame, pl.LazyFrame]:
         """Create temporal split based on date column"""
         # Sort by date and split

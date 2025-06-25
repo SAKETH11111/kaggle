@@ -15,7 +15,7 @@ import multiprocessing as mp
 from functools import partial
 import logging
 from dataclasses import dataclass
-from feature_engineering import FeatureEngineer
+from src.feature_pipeline.feature_engineering import FeatureEngineer
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -339,7 +339,7 @@ class DataPipeline:
         # (e.g. inference pipelines) can reuse the same transformations.
         # This avoids duplicated initialization and keeps feature logic
         # centralized in one place.
-        from feature_engineering import FeatureEngineer  # local import to avoid cycles
+        from src.feature_pipeline.feature_engineering import FeatureEngineer  # local import to avoid cycles
         self.feature_engineer = FeatureEngineer()
         
     def initialize_pipeline(self) -> Dict:
